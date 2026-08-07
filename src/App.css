@@ -1,4 +1,7 @@
 :root {
+  /* The app is light-only; without this, iOS Safari in dark mode substitutes
+     its own dark-mode control colors (white button text on our white buttons). */
+  color-scheme: light;
   --bg: #f6f7f9;
   --panel: #ffffff;
   --border: #dde1e6;
@@ -90,7 +93,10 @@ button {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
+  color: var(--text);
   cursor: pointer;
+  -webkit-appearance: none;
+  appearance: none;
 }
 button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
 button:disabled { opacity: 0.5; cursor: not-allowed; }
@@ -111,6 +117,7 @@ input[type='text'], input:not([type]), input[type='number'] {
   border: 1px solid var(--border);
   border-radius: 6px;
   background: var(--panel);
+  color: var(--text);
 }
 input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent); }
 
