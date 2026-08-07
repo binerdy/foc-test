@@ -7,6 +7,8 @@ export interface Piece {
   id: string
   name: string
   playerIds: string[]
+  /** Optional pastel colour (hex) for colour-coding this piece in the UI. */
+  color?: string
 }
 
 export interface ProjectSettings {
@@ -65,6 +67,7 @@ export function parseProject(data: unknown): Project {
       id: String(p.id ?? newId()),
       name: String(p.name ?? ''),
       playerIds: Array.isArray(p.playerIds) ? p.playerIds.map(String).filter((id) => playerIdSet.has(id)) : [],
+      ...(typeof p.color === 'string' ? { color: p.color } : {}),
     }))
   return { formatVersion: 1, name: d.name, settings, players, pieces }
 }

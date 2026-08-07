@@ -1,6 +1,7 @@
-import { useCallback, useEffect, useMemo, useState, type ClipboardEvent } from 'react'
-import { createProject, newId, type Project } from './types'
+import { useCallback, useEffect, useMemo, useState, type ClipboardEvent, type CSSProperties } from 'react'
+import { createProject, newId, type Piece, type Project } from './types'
 import { findCombinations } from './combinations'
+import { inkFor, PASTEL_PALETTE } from './colors'
 import { exportCombinations } from './excel'
 import {
   autosave,
@@ -293,6 +294,12 @@ function NameAdder({
   )
 }
 
+/** Chip styling for a piece: its pastel colour with complementary ink, if set. */
+function pieceChipStyle(piece: Piece | undefined): CSSProperties | undefined {
+  if (!piece?.color) return undefined
+  return { background: piece.color, color: inkFor(piece.color) }
+}
+
 // --------------------------------------------------------------------- players
 
 function PlayersView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
@@ -343,7 +350,7 @@ function PlayersView({ project, update }: { project: Project; update: (fn: (p: P
               <div className="card-head">
                 <strong>{pl.name}</strong>
                 <span className="chips">
-                  {pieces.map((pc) => <span key={pc.id} className="chip">{pc.name}</span>)}
+                  {pieces.map((pc) => <span key={pc.id} className="chip" style={pieceChipStyle(pc)}>{pc.name}</span>)}
                   {pieces.length === 0 && <span className="hint">no pieces</span>}
                 </span>
                 <span className="spacer" />
@@ -379,6 +386,15 @@ function PlayersView({ project, update }: { project: Project; update: (fn: (p: P
 
 function PiecesView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
   const [openId, setOpenId] = useState<string | null>(null)
+  const [paletteId, setPaletteId] = useState<string | null>(null)
+
+  const setColor = (pieceId: string, color: string | undefined) => {
+    update((p) => ({
+      ...p,
+      pieces: p.pieces.map((pc) => (pc.id === pieceId ? { ...pc, color } : pc)),
+    }))
+    setPaletteId(null)
+  }
 
   const add = (names: string[]) =>
     update((p) => ({ ...p, pieces: [...p.pieces, ...names.map((n) => ({ id: newId(), name: n, playerIds: [] }))] }))
@@ -418,6 +434,13 @@ function PiecesView({ project, update }: { project: Project; update: (fn: (p: Pr
           return (
             <li key={pc.id} className="card">
               <div className="card-head">
+                <button
+                  className={pc.color ? 'dot' : 'dot empty'}
+                  style={pc.color ? { background: pc.color } : undefined}
+                  title={pc.color ? 'Change colour' : 'Set colour'}
+                  aria-label={`Colour for ${pc.name}`}
+                  onClick={() => setPaletteId(paletteId === pc.id ? null : pc.id)}
+                />
                 <strong>{pc.name}</strong>
                 <span className="chips">
                   {players.map((pl) => <span key={pl.id} className="chip">{pl.name}</span>)}
@@ -429,6 +452,21 @@ function PiecesView({ project, update }: { project: Project; update: (fn: (p: Pr
                 </button>
                 <button className="link danger" onClick={() => remove(pc.id)}>Delete</button>
               </div>
+              {paletteId === pc.id && (
+                <div className="palette">
+                  {PASTEL_PALETTE.map((c) => (
+                    <button
+                      key={c}
+                      className={pc.color === c ? 'swatch current' : 'swatch'}
+                      style={{ background: c }}
+                      title={c}
+                      aria-label={`Colour ${c}`}
+                      onClick={() => setColor(pc.id, c)}
+                    />
+                  ))}
+                  <button className="swatch none" title="No colour" onClick={() => setColor(pc.id, undefined)}>✕</button>
+                </div>
+              )}
               {open && (
                 <div className="assign-grid">
                   {project.players.length === 0 && <p className="hint">Create players first (Players tab).</p>}
@@ -500,6 +538,7 @@ function MatrixView({ project, update }: { project: Project; update: (fn: (p: Pr
                     <td
                       key={pc.id}
                       className={on ? 'on' : ''}
+                      style={on && pc.color ? { background: pc.color, color: inkFor(pc.color) } : undefined}
                       onClick={() => toggle(pc.id, pl.id)}
                       role="checkbox"
                       aria-checked={on}
@@ -529,6 +568,7 @@ function SchedulerView({ project }: { project: Project }) {
 
   const playerName = useMemo(() => new Map(project.players.map((p) => [p.id, p.name])), [project.players])
   const pieceName = useMemo(() => new Map(project.pieces.map((p) => [p.id, p.name])), [project.pieces])
+  const pieceById = useMemo(() => new Map(project.pieces.map((p) => [p.id, p])), [project.pieces])
 
   const togglePiece = (id: string) => {
     setSelectedPieceIds((s) => {
@@ -617,7 +657,7 @@ function SchedulerView({ project }: { project: Project }) {
                     <div className="combo-body">
                       <div className="combo-pieces">
                         {c.pieceIds.map((id) => (
-                          <span key={id} className="chip big" title={pieceNames(project, id)}>
+                          <span key={id} className="chip big" style={pieceChipStyle(pieceById.get(id))} title={pieceNames(project, id)}>
                             {pieceName.get(id)}
                           </span>
                         ))}
