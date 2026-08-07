@@ -180,12 +180,35 @@ input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent)
 .check.picked { background: var(--accent-soft); }
 
 /* ---------- matrix ---------- */
-.matrix-wrap { overflow-x: auto; background: var(--panel); border: 1px solid var(--border); border-radius: 8px; }
-.matrix { border-collapse: collapse; width: 100%; }
-.matrix th, .matrix td { border: 1px solid var(--border); padding: 6px 10px; text-align: center; }
-.matrix thead th { background: var(--bg); position: sticky; top: 0; }
+.matrix-wrap {
+  /* Both scroll axes must live on this container so the sticky header row
+     and name column stay pinned while the cells scroll under them. */
+  overflow: auto;
+  max-height: calc(100vh - 210px);
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+}
+/* Collapsed borders detach from sticky cells and scroll away with the
+   content, so use separate borders drawn on each cell's right/bottom edge. */
+.matrix { border-collapse: separate; border-spacing: 0; width: 100%; }
+.matrix th, .matrix td {
+  border-right: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: 6px 10px;
+  text-align: center;
+}
+.matrix thead th { background: var(--bg); position: sticky; top: 0; z-index: 2; }
+.matrix thead th:first-child { left: 0; z-index: 3; }
 .matrix thead th span { display: block; }
-.matrix tbody th { text-align: left; background: var(--bg); white-space: nowrap; }
+.matrix tbody th {
+  text-align: left;
+  background: var(--bg);
+  white-space: nowrap;
+  position: sticky;
+  left: 0;
+  z-index: 1;
+}
 .matrix small { color: var(--muted); font-weight: 400; }
 .matrix td { cursor: pointer; min-width: 44px; user-select: none; }
 .matrix td:hover { background: var(--accent-soft); }
