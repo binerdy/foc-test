@@ -1,6 +1,6 @@
 import * as XLSX from 'xlsx'
 import type { Combination } from './combinations'
-import type { Project } from './types'
+import { INSTRUMENTS_SET_ID, type Piece, type Project } from './types'
 
 /**
  * Export the selected combinations as an .xlsx workbook:
@@ -12,6 +12,22 @@ export function exportCombinations(project: Project, selected: Combination[]): v
   const playerName = new Map(project.players.map((p) => [p.id, p.name]))
   const pieceName = new Map(project.pieces.map((p) => [p.id, p.name]))
   const venues = project.settings.venues
+  const instrumentCode = new Map(
+    (project.sets.find((s) => s.id === INSTRUMENTS_SET_ID)?.items ?? []).map((it) => [it.id, it.code]),
+  )
+
+  // "Anna (vl 1.2)" — instrument code plus section.position, with s/p prefixes when only one is set
+  const seatSuffix = (piece: Piece, playerId: string): string => {
+    const seat = piece.seats?.[playerId]
+    if (!seat) return ''
+    const parts: string[] = []
+    const code = seat.instrumentId ? instrumentCode.get(seat.instrumentId) : undefined
+    if (code) parts.push(code)
+    if (seat.section !== undefined && seat.position !== undefined) parts.push(`${seat.section}.${seat.position}`)
+    else if (seat.section !== undefined) parts.push(`s${seat.section}`)
+    else if (seat.position !== undefined) parts.push(`p${seat.position}`)
+    return parts.length > 0 ? ` (${parts.join(' ')})` : ''
+  }
 
   const overviewRows: (string | number)[][] = []
   const header = ['#', ...Array.from({ length: venues }, (_, i) => `Venue ${i + 1}`), 'Players used', 'Players idle', 'Idle players']
@@ -32,7 +48,9 @@ export function exportCombinations(project: Project, selected: Combination[]): v
       detailRows.push([
         j === 0 ? i + 1 : '',
         pieceName.get(pieceId) ?? '?',
-        (piece?.playerIds ?? []).map((id) => playerName.get(id) ?? '?').join(', '),
+        piece
+          ? piece.playerIds.map((id) => (playerName.get(id) ?? '?') + seatSuffix(piece, id)).join(', ')
+          : '',
       ])
     })
     detailRows.push(['', 'Idle', c.idlePlayerIds.map((id) => playerName.get(id) ?? '?').join(', ')])

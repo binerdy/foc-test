@@ -20,6 +20,15 @@ as few players as possible sit around doing nothing.
   first). Each combination also lists the idle players so they can be given self-study
   or coaching tasks. A "full groupings only" filter hides combinations to which another
   selected piece could still be added.
+- **Configuration sets** — a Configuration tab holds reusable sets. The built-in
+  Instruments set ships with vl/vla/c/db/h/hsch/ob/fl/cl and can be extended; further
+  sets can be created freely.
+- **Seating per piece** — click a piece to open its detail page and give each assigned
+  player an instrument, section and position for that piece (all optional, and they may
+  differ from piece to piece). Positions are unique within a piece — conflicts are
+  rejected with an inline error. Click a player to see and edit the same data from the
+  player's perspective across all their pieces. Seating appears in the Excel export as
+  e.g. `Anna (vl 1.2)`.
 - **Excel export** — tick any number of combinations and download them as an `.xlsx`
   file (overview, per-piece detail, and the full assignment matrix).
 - **Settings** — number of venues (default 4), session duration (default 50 min,
