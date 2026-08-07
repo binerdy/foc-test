@@ -124,6 +124,36 @@ export function downloadProject(project: Project): void {
   URL.revokeObjectURL(url)
 }
 
+/** Touch-driven WebKit device (iPhone/iPad) — no File System Access API there. */
+export const isTouchWebKit = !supportsFileSystemAccess && navigator.maxTouchPoints > 1
+
+/**
+ * Save without a connected folder. On iPhone/iPad this opens the share sheet
+ * with the project file, where "Save to Files" lets the user pick any folder
+ * in iCloud Drive / On My iPhone — the closest iOS gets to a folder
+ * connection. Everywhere else it downloads the file.
+ */
+export async function saveProjectFallback(project: Project): Promise<'shared' | 'downloaded' | 'cancelled'> {
+  if (isTouchWebKit) {
+    const file = new File([JSON.stringify(project, null, 2)], fileNameFor(project), { type: 'application/json' })
+    const nav = navigator as Navigator & {
+      canShare?: (data: { files: File[] }) => boolean
+      share?: (data: { files: File[] }) => Promise<void>
+    }
+    if (nav.canShare?.({ files: [file] }) && nav.share) {
+      try {
+        await nav.share({ files: [file] })
+        return 'shared'
+      } catch (e) {
+        if ((e as Error).name === 'AbortError') return 'cancelled'
+        // sharing unavailable after all — fall through to a plain download
+      }
+    }
+  }
+  downloadProject(project)
+  return 'downloaded'
+}
+
 export function uploadProject(): Promise<Project> {
   return new Promise((resolve, reject) => {
     const input = document.createElement('input')
