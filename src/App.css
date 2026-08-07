@@ -209,6 +209,7 @@ select {
 
 /* ---------- configuration ---------- */
 .config { display: flex; flex-direction: column; gap: 14px; max-width: 640px; }
+.config-heading { margin: 6px 0 0; font-size: 1.05rem; }
 .set-table { border-collapse: collapse; margin: 10px 0 4px; width: 100%; }
 .set-table td { border-bottom: 1px solid var(--border); padding: 5px 10px 5px 0; }
 .set-code { font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace; font-weight: 600; width: 70px; }

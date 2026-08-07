@@ -19,7 +19,7 @@ import {
 } from './storage'
 import './App.css'
 
-type Tab = 'players' | 'pieces' | 'matrix' | 'scheduler' | 'config' | 'settings'
+type Tab = 'players' | 'pieces' | 'matrix' | 'scheduler' | 'config'
 
 /** A drill-down page opened from the Players or Pieces tab. */
 type Detail = { kind: 'player' | 'piece'; id: string }
@@ -111,7 +111,6 @@ export default function App() {
             ['matrix', 'Assignments'],
             ['scheduler', 'Scheduler'],
             ['config', 'Configuration'],
-            ['settings', 'Settings'],
           ] as [Tab, string][]
         ).map(([t, label]) => (
           <button
@@ -135,7 +134,6 @@ export default function App() {
             {tab === 'matrix' && <MatrixView project={project} update={update} />}
             {tab === 'scheduler' && <SchedulerView project={project} />}
             {tab === 'config' && <ConfigView project={project} update={update} />}
-            {tab === 'settings' && <SettingsView project={project} update={update} />}
           </>
         )}
       </main>
@@ -958,6 +956,12 @@ function ConfigView({ project, update }: { project: Project; update: (fn: (p: Pr
 
   return (
     <section className="config">
+      <h3 className="config-heading">Rehearsal settings</h3>
+      <div className="card">
+        <SettingsView project={project} update={update} />
+      </div>
+
+      <h3 className="config-heading">Sets</h3>
       <p className="hint">
         Sets are reusable lists used elsewhere in the app — the Instruments set feeds the instrument choice on
         the piece and player detail pages.
