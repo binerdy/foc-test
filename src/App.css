@@ -144,8 +144,7 @@ input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent)
 .start h1 { margin-top: 0; }
 .start form { display: flex; gap: 8px; margin: 20px 0 12px; }
 .start input { flex: 1; }
-.recover { text-align: left; margin-top: 24px; border-top: 1px solid var(--border); padding-top: 12px; }
-.recover h3 { margin: 0 0 6px; font-size: 1rem; }
+.unsaved-dot { color: #ffd75e; }
 
 /* ---------- players / pieces cards ---------- */
 .add-row { display: flex; gap: 8px; margin-bottom: 16px; align-items: center; flex-wrap: wrap; }
