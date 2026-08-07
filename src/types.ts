@@ -3,12 +3,60 @@ export interface Player {
   name: string
 }
 
+/** One entry of a configuration set, e.g. an instrument. */
+export interface SetItem {
+  id: string
+  code: string
+  label: string
+}
+
+/** A named configuration set (Configuration tab), e.g. "Instruments". */
+export interface ConfigSet {
+  id: string
+  name: string
+  items: SetItem[]
+}
+
+/** A player's seat in one specific piece. All fields optional except that
+ *  position, when set, must be unique within the piece (enforced by the UI). */
+export interface Seat {
+  instrumentId?: string
+  section?: number
+  position?: number
+}
+
 export interface Piece {
   id: string
   name: string
   playerIds: string[]
   /** Optional pastel colour (hex) for colour-coding this piece in the UI. */
   color?: string
+  /** Per-player seating for this piece (instrument/section/position), keyed by player id. */
+  seats?: Record<string, Seat>
+}
+
+export const INSTRUMENTS_SET_ID = 'instruments'
+
+const DEFAULT_INSTRUMENTS: [string, string][] = [
+  ['vl', 'violin'],
+  ['vla', 'viola'],
+  ['c', 'chello'],
+  ['db', 'double bass'],
+  ['h', 'harp'],
+  ['hsch', 'harpsichord'],
+  ['ob', 'oboe'],
+  ['fl', 'flute'],
+  ['cl', 'clarinet'],
+]
+
+export function defaultSets(): ConfigSet[] {
+  return [
+    {
+      id: INSTRUMENTS_SET_ID,
+      name: 'Instruments',
+      items: DEFAULT_INSTRUMENTS.map(([code, label]) => ({ id: code, code, label })),
+    },
+  ]
 }
 
 export interface ProjectSettings {
@@ -26,6 +74,7 @@ export interface Project {
   settings: ProjectSettings
   players: Player[]
   pieces: Piece[]
+  sets: ConfigSet[]
 }
 
 export const DEFAULT_SETTINGS: ProjectSettings = {
@@ -42,6 +91,7 @@ export function createProject(name: string): Project {
     settings: { ...DEFAULT_SETTINGS },
     players: [],
     pieces: [],
+    sets: defaultSets(),
   }
 }
 
@@ -61,13 +111,42 @@ export function parseProject(data: unknown): Project {
     .filter((p): p is Record<string, unknown> => typeof p === 'object' && p !== null)
     .map((p) => ({ id: String(p.id ?? newId()), name: String(p.name ?? '') }))
   const playerIdSet = new Set(players.map((p) => p.id))
+  const sets: ConfigSet[] = Array.isArray(d.sets)
+    ? (d.sets as unknown[])
+        .filter((s): s is Record<string, unknown> => typeof s === 'object' && s !== null)
+        .map((s) => ({
+          id: String(s.id ?? newId()),
+          name: String(s.name ?? ''),
+          items: Array.isArray(s.items)
+            ? (s.items as unknown[])
+                .filter((it): it is Record<string, unknown> => typeof it === 'object' && it !== null)
+                .map((it) => ({ id: String(it.id ?? newId()), code: String(it.code ?? ''), label: String(it.label ?? '') }))
+            : [],
+        }))
+    : defaultSets() // older project files predate sets
   const pieces: Piece[] = (d.pieces as unknown[])
     .filter((p): p is Record<string, unknown> => typeof p === 'object' && p !== null)
-    .map((p) => ({
-      id: String(p.id ?? newId()),
-      name: String(p.name ?? ''),
-      playerIds: Array.isArray(p.playerIds) ? p.playerIds.map(String).filter((id) => playerIdSet.has(id)) : [],
-      ...(typeof p.color === 'string' ? { color: p.color } : {}),
-    }))
-  return { formatVersion: 1, name: d.name, settings, players, pieces }
+    .map((p) => {
+      const playerIds = Array.isArray(p.playerIds) ? p.playerIds.map(String).filter((id) => playerIdSet.has(id)) : []
+      const seats: Record<string, Seat> = {}
+      if (typeof p.seats === 'object' && p.seats !== null) {
+        for (const [playerId, raw] of Object.entries(p.seats as Record<string, unknown>)) {
+          if (!playerIds.includes(playerId) || typeof raw !== 'object' || raw === null) continue
+          const r = raw as Record<string, unknown>
+          const seat: Seat = {}
+          if (typeof r.instrumentId === 'string') seat.instrumentId = r.instrumentId
+          if (typeof r.section === 'number' && Number.isFinite(r.section)) seat.section = r.section
+          if (typeof r.position === 'number' && Number.isFinite(r.position)) seat.position = r.position
+          if (Object.keys(seat).length > 0) seats[playerId] = seat
+        }
+      }
+      return {
+        id: String(p.id ?? newId()),
+        name: String(p.name ?? ''),
+        playerIds,
+        ...(typeof p.color === 'string' ? { color: p.color } : {}),
+        ...(Object.keys(seats).length > 0 ? { seats } : {}),
+      }
+    })
+  return { formatVersion: 1, name: d.name, settings, players, pieces, sets }
 }

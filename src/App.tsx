@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useState, type ClipboardEvent, type CSSProperties } from 'react'
-import { createProject, newId, type Piece, type Project } from './types'
+import { createProject, INSTRUMENTS_SET_ID, newId, type Piece, type Project, type Seat } from './types'
 import { findCombinations } from './combinations'
 import { inkFor, PASTEL_PALETTE } from './colors'
 import { exportCombinations } from './excel'
@@ -17,11 +17,15 @@ import {
 } from './storage'
 import './App.css'
 
-type Tab = 'players' | 'pieces' | 'matrix' | 'scheduler' | 'settings'
+type Tab = 'players' | 'pieces' | 'matrix' | 'scheduler' | 'config' | 'settings'
+
+/** A drill-down page opened from the Players or Pieces tab. */
+type Detail = { kind: 'player' | 'piece'; id: string }
 
 export default function App() {
   const [project, setProject] = useState<Project | null>(() => loadAutosave())
   const [tab, setTab] = useState<Tab>('players')
+  const [detail, setDetail] = useState<Detail | null>(null)
   const [folder, setFolder] = useState<FileSystemDirectoryHandle | null>(null)
   const [status, setStatus] = useState('')
 
@@ -61,8 +65,8 @@ export default function App() {
             project={project}
             folder={folder}
             setFolder={setFolder}
-            onLoaded={(p) => { setProject(p); flash(`Loaded “${p.name}”`) }}
-            onNew={() => { setProject(createProject('New project')); setTab('players') }}
+            onLoaded={(p) => { setProject(p); setDetail(null); flash(`Loaded “${p.name}”`) }}
+            onNew={() => { setProject(createProject('New project')); setDetail(null); setTab('players') }}
             flash={flash}
           />
         </div>
@@ -75,20 +79,34 @@ export default function App() {
             ['pieces', `Pieces (${project.pieces.length})`],
             ['matrix', 'Assignments'],
             ['scheduler', 'Scheduler'],
+            ['config', 'Configuration'],
             ['settings', 'Settings'],
           ] as [Tab, string][]
         ).map(([t, label]) => (
-          <button key={t} className={tab === t ? 'tab active' : 'tab'} onClick={() => setTab(t)}>
+          <button
+            key={t}
+            className={tab === t && !detail ? 'tab active' : 'tab'}
+            onClick={() => { setTab(t); setDetail(null) }}
+          >
             {label}
           </button>
         ))}
       </nav>
       <main className="content">
-        {tab === 'players' && <PlayersView project={project} update={update} />}
-        {tab === 'pieces' && <PiecesView project={project} update={update} />}
-        {tab === 'matrix' && <MatrixView project={project} update={update} />}
-        {tab === 'scheduler' && <SchedulerView project={project} />}
-        {tab === 'settings' && <SettingsView project={project} update={update} />}
+        {detail?.kind === 'piece' ? (
+          <PieceDetailView project={project} pieceId={detail.id} update={update} onBack={() => setDetail(null)} />
+        ) : detail?.kind === 'player' ? (
+          <PlayerDetailView project={project} playerId={detail.id} update={update} onBack={() => setDetail(null)} />
+        ) : (
+          <>
+            {tab === 'players' && <PlayersView project={project} update={update} onOpen={(id) => setDetail({ kind: 'player', id })} />}
+            {tab === 'pieces' && <PiecesView project={project} update={update} onOpen={(id) => setDetail({ kind: 'piece', id })} />}
+            {tab === 'matrix' && <MatrixView project={project} update={update} />}
+            {tab === 'scheduler' && <SchedulerView project={project} />}
+            {tab === 'config' && <ConfigView project={project} update={update} />}
+            {tab === 'settings' && <SettingsView project={project} update={update} />}
+          </>
+        )}
       </main>
     </div>
   )
@@ -300,9 +318,33 @@ function pieceChipStyle(piece: Piece | undefined): CSSProperties | undefined {
   return { background: piece.color, color: inkFor(piece.color) }
 }
 
+/** Toggle a player's assignment to a piece; unassigning also drops their seat. */
+function togglePieceAssignment(project: Project, pieceId: string, playerId: string): Project {
+  return {
+    ...project,
+    pieces: project.pieces.map((pc) => {
+      if (pc.id !== pieceId) return pc
+      if (pc.playerIds.includes(playerId)) {
+        const seats = { ...pc.seats }
+        delete seats[playerId]
+        return {
+          ...pc,
+          playerIds: pc.playerIds.filter((id) => id !== playerId),
+          seats: Object.keys(seats).length > 0 ? seats : undefined,
+        }
+      }
+      return { ...pc, playerIds: [...pc.playerIds, playerId] }
+    }),
+  }
+}
+
 // --------------------------------------------------------------------- players
 
-function PlayersView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
+function PlayersView({ project, update, onOpen }: {
+  project: Project
+  update: (fn: (p: Project) => Project) => void
+  onOpen: (playerId: string) => void
+}) {
   const [openId, setOpenId] = useState<string | null>(null)
 
   const add = (names: string[]) =>
@@ -312,23 +354,19 @@ function PlayersView({ project, update }: { project: Project; update: (fn: (p: P
     update((p) => ({
       ...p,
       players: p.players.filter((pl) => pl.id !== id),
-      pieces: p.pieces.map((pc) => ({ ...pc, playerIds: pc.playerIds.filter((pid) => pid !== id) })),
+      pieces: p.pieces.map((pc) => {
+        const seats = { ...pc.seats }
+        delete seats[id]
+        return {
+          ...pc,
+          playerIds: pc.playerIds.filter((pid) => pid !== id),
+          seats: Object.keys(seats).length > 0 ? seats : undefined,
+        }
+      }),
     }))
 
   const togglePiece = (playerId: string, pieceId: string) =>
-    update((p) => ({
-      ...p,
-      pieces: p.pieces.map((pc) =>
-        pc.id === pieceId
-          ? {
-              ...pc,
-              playerIds: pc.playerIds.includes(playerId)
-                ? pc.playerIds.filter((id) => id !== playerId)
-                : [...pc.playerIds, playerId],
-            }
-          : pc,
-      ),
-    }))
+    update((p) => togglePieceAssignment(p, pieceId, playerId))
 
   return (
     <section>
@@ -348,7 +386,9 @@ function PlayersView({ project, update }: { project: Project; update: (fn: (p: P
           return (
             <li key={pl.id} className="card">
               <div className="card-head">
-                <strong>{pl.name}</strong>
+                <button className="name-link" onClick={() => onOpen(pl.id)} title="Open player details">
+                  {pl.name}
+                </button>
                 <span className="chips">
                   {pieces.map((pc) => <span key={pc.id} className="chip" style={pieceChipStyle(pc)}>{pc.name}</span>)}
                   {pieces.length === 0 && <span className="hint">no pieces</span>}
@@ -384,7 +424,11 @@ function PlayersView({ project, update }: { project: Project; update: (fn: (p: P
 
 // ---------------------------------------------------------------------- pieces
 
-function PiecesView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
+function PiecesView({ project, update, onOpen }: {
+  project: Project
+  update: (fn: (p: Project) => Project) => void
+  onOpen: (pieceId: string) => void
+}) {
   const [openId, setOpenId] = useState<string | null>(null)
   const [paletteId, setPaletteId] = useState<string | null>(null)
 
@@ -402,19 +446,7 @@ function PiecesView({ project, update }: { project: Project; update: (fn: (p: Pr
   const remove = (id: string) => update((p) => ({ ...p, pieces: p.pieces.filter((pc) => pc.id !== id) }))
 
   const togglePlayer = (pieceId: string, playerId: string) =>
-    update((p) => ({
-      ...p,
-      pieces: p.pieces.map((pc) =>
-        pc.id === pieceId
-          ? {
-              ...pc,
-              playerIds: pc.playerIds.includes(playerId)
-                ? pc.playerIds.filter((id) => id !== playerId)
-                : [...pc.playerIds, playerId],
-            }
-          : pc,
-      ),
-    }))
+    update((p) => togglePieceAssignment(p, pieceId, playerId))
 
   return (
     <section>
@@ -441,7 +473,9 @@ function PiecesView({ project, update }: { project: Project; update: (fn: (p: Pr
                   aria-label={`Colour for ${pc.name}`}
                   onClick={() => setPaletteId(paletteId === pc.id ? null : pc.id)}
                 />
-                <strong>{pc.name}</strong>
+                <button className="name-link" onClick={() => onOpen(pc.id)} title="Open piece details">
+                  {pc.name}
+                </button>
                 <span className="chips">
                   {players.map((pl) => <span key={pl.id} className="chip">{pl.name}</span>)}
                   {players.length === 0 && <span className="hint">no players</span>}
@@ -494,19 +528,7 @@ function PiecesView({ project, update }: { project: Project; update: (fn: (p: Pr
 
 function MatrixView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
   const toggle = (pieceId: string, playerId: string) =>
-    update((p) => ({
-      ...p,
-      pieces: p.pieces.map((pc) =>
-        pc.id === pieceId
-          ? {
-              ...pc,
-              playerIds: pc.playerIds.includes(playerId)
-                ? pc.playerIds.filter((id) => id !== playerId)
-                : [...pc.playerIds, playerId],
-            }
-          : pc,
-      ),
-    }))
+    update((p) => togglePieceAssignment(p, pieceId, playerId))
 
   if (project.players.length === 0 || project.pieces.length === 0) {
     return <p className="hint">Add players and pieces first — then this combined view shows every assignment at a glance.</p>
@@ -697,6 +719,295 @@ function SchedulerView({ project }: { project: Project }) {
     const pc = p.pieces.find((x) => x.id === pieceId)
     return (pc?.playerIds ?? []).map((id) => playerName.get(id) ?? '?').join(', ')
   }
+}
+
+// ------------------------------------------------------------------ seat editor
+
+/**
+ * Instrument / section / position editor for one player in one piece.
+ * Position must be unique within the piece: a conflicting value is rejected
+ * with an inline error instead of being saved.
+ */
+function SeatEditor({ project, piece, playerId, update }: {
+  project: Project
+  piece: Piece
+  playerId: string
+  update: (fn: (p: Project) => Project) => void
+}) {
+  const instruments = project.sets.find((s) => s.id === INSTRUMENTS_SET_ID)?.items ?? []
+  const seat = piece.seats?.[playerId] ?? {}
+  const [posText, setPosText] = useState(seat.position?.toString() ?? '')
+  const [error, setError] = useState('')
+
+  const setSeat = (patch: Partial<Seat>) =>
+    update((p) => ({
+      ...p,
+      pieces: p.pieces.map((pc) => {
+        if (pc.id !== piece.id) return pc
+        const merged = { ...(pc.seats?.[playerId] ?? {}), ...patch }
+        const clean: Seat = {}
+        if (merged.instrumentId) clean.instrumentId = merged.instrumentId
+        if (merged.section !== undefined) clean.section = merged.section
+        if (merged.position !== undefined) clean.position = merged.position
+        const seats = { ...(pc.seats ?? {}) }
+        if (Object.keys(clean).length > 0) seats[playerId] = clean
+        else delete seats[playerId]
+        return { ...pc, seats: Object.keys(seats).length > 0 ? seats : undefined }
+      }),
+    }))
+
+  const onPosition = (value: string) => {
+    setPosText(value)
+    if (value.trim() === '') {
+      setError('')
+      setSeat({ position: undefined })
+      return
+    }
+    const n = parseInt(value, 10)
+    if (!Number.isFinite(n)) return
+    const holder = piece.playerIds.find((id) => id !== playerId && piece.seats?.[id]?.position === n)
+    if (holder) {
+      const holderName = project.players.find((pl) => pl.id === holder)?.name ?? 'another player'
+      setError(`Position ${n} is already taken by ${holderName} in this piece`)
+      return
+    }
+    setError('')
+    setSeat({ position: n })
+  }
+
+  return (
+    <>
+      <td>
+        <select
+          value={seat.instrumentId ?? ''}
+          onChange={(e) => setSeat({ instrumentId: e.target.value || undefined })}
+        >
+          <option value="">—</option>
+          {instruments.map((it) => (
+            <option key={it.id} value={it.id}>{it.code} · {it.label}</option>
+          ))}
+        </select>
+      </td>
+      <td>
+        <input
+          type="number"
+          min={1}
+          className="seat-num"
+          value={seat.section ?? ''}
+          onChange={(e) => {
+            const n = parseInt(e.target.value, 10)
+            setSeat({ section: Number.isFinite(n) ? n : undefined })
+          }}
+        />
+      </td>
+      <td>
+        <input
+          type="number"
+          min={1}
+          className={error ? 'seat-num invalid' : 'seat-num'}
+          value={posText}
+          onChange={(e) => onPosition(e.target.value)}
+          onBlur={() => { if (error) { setPosText(seat.position?.toString() ?? ''); setError('') } }}
+        />
+        {error && <div className="seat-error">{error}</div>}
+      </td>
+    </>
+  )
+}
+
+// ----------------------------------------------------------------- detail pages
+
+function PieceDetailView({ project, pieceId, update, onBack }: {
+  project: Project
+  pieceId: string
+  update: (fn: (p: Project) => Project) => void
+  onBack: () => void
+}) {
+  const piece = project.pieces.find((pc) => pc.id === pieceId)
+  if (!piece) {
+    return <section><button className="link" onClick={onBack}>← Back</button><p className="hint">This piece no longer exists.</p></section>
+  }
+  const players = project.players.filter((pl) => piece.playerIds.includes(pl.id))
+  return (
+    <section>
+      <div className="detail-head">
+        <button className="link" onClick={onBack}>← Back to pieces</button>
+        <h2>
+          {piece.color && <span className="dot" style={{ background: piece.color, cursor: 'default' }} />}
+          {piece.name}
+        </h2>
+        <p className="hint">
+          Assign each player an instrument, section and position for this piece. Section and position may stay
+          empty; a position must be unique within the piece.
+        </p>
+      </div>
+      {players.length === 0 ? (
+        <p className="hint">No players assigned to this piece yet — assign them in the Pieces tab or the Assignments matrix.</p>
+      ) : (
+        <table className="seat-table">
+          <thead>
+            <tr><th>Player</th><th>Instrument</th><th>Section</th><th>Position</th></tr>
+          </thead>
+          <tbody>
+            {players.map((pl) => (
+              <tr key={pl.id}>
+                <th>{pl.name}</th>
+                <SeatEditor project={project} piece={piece} playerId={pl.id} update={update} />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
+}
+
+function PlayerDetailView({ project, playerId, update, onBack }: {
+  project: Project
+  playerId: string
+  update: (fn: (p: Project) => Project) => void
+  onBack: () => void
+}) {
+  const player = project.players.find((pl) => pl.id === playerId)
+  if (!player) {
+    return <section><button className="link" onClick={onBack}>← Back</button><p className="hint">This player no longer exists.</p></section>
+  }
+  const pieces = project.pieces.filter((pc) => pc.playerIds.includes(playerId))
+  return (
+    <section>
+      <div className="detail-head">
+        <button className="link" onClick={onBack}>← Back to players</button>
+        <h2>{player.name}</h2>
+        <p className="hint">
+          {player.name}&apos;s instrument, section and position per piece — they may differ from piece to piece.
+          A position must be unique within its piece.
+        </p>
+      </div>
+      {pieces.length === 0 ? (
+        <p className="hint">{player.name} is not assigned to any piece yet.</p>
+      ) : (
+        <table className="seat-table">
+          <thead>
+            <tr><th>Piece</th><th>Instrument</th><th>Section</th><th>Position</th></tr>
+          </thead>
+          <tbody>
+            {pieces.map((pc) => (
+              <tr key={pc.id}>
+                <th><span className="chip" style={pieceChipStyle(pc)}>{pc.name}</span></th>
+                <SeatEditor project={project} piece={pc} playerId={playerId} update={update} />
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      )}
+    </section>
+  )
+}
+
+// ---------------------------------------------------------------- configuration
+
+function ConfigView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
+  const [newSetName, setNewSetName] = useState('')
+
+  const addSet = () => {
+    const name = newSetName.trim()
+    if (!name) return
+    update((p) => ({ ...p, sets: [...p.sets, { id: newId(), name, items: [] }] }))
+    setNewSetName('')
+  }
+
+  return (
+    <section className="config">
+      <p className="hint">
+        Sets are reusable lists used elsewhere in the app — the Instruments set feeds the instrument choice on
+        the piece and player detail pages.
+      </p>
+      {project.sets.map((set) => (
+        <SetCard key={set.id} setId={set.id} project={project} update={update} />
+      ))}
+      <form className="add-row" onSubmit={(e) => { e.preventDefault(); addSet() }}>
+        <input placeholder="New set name…" value={newSetName} onChange={(e) => setNewSetName(e.target.value)} />
+        <button type="submit" disabled={!newSetName.trim()}>Add set</button>
+      </form>
+    </section>
+  )
+}
+
+function SetCard({ setId, project, update }: {
+  setId: string
+  project: Project
+  update: (fn: (p: Project) => Project) => void
+}) {
+  const [code, setCode] = useState('')
+  const [label, setLabel] = useState('')
+  const set = project.sets.find((s) => s.id === setId)
+  if (!set) return null
+
+  const addItem = () => {
+    const c = code.trim()
+    const l = label.trim()
+    if (!c || !l) return
+    if (set.items.some((it) => it.code.toLowerCase() === c.toLowerCase())) return
+    update((p) => ({
+      ...p,
+      sets: p.sets.map((s) => (s.id === setId ? { ...s, items: [...s.items, { id: newId(), code: c, label: l }] } : s)),
+    }))
+    setCode('')
+    setLabel('')
+  }
+
+  const removeItem = (itemId: string) =>
+    update((p) => ({
+      ...p,
+      sets: p.sets.map((s) => (s.id === setId ? { ...s, items: s.items.filter((it) => it.id !== itemId) } : s)),
+      // drop dangling references from seats when an instrument is deleted
+      pieces: setId === INSTRUMENTS_SET_ID
+        ? p.pieces.map((pc) => {
+            if (!pc.seats) return pc
+            const seats: Record<string, Seat> = {}
+            for (const [playerId, seat] of Object.entries(pc.seats)) {
+              const cleaned = seat.instrumentId === itemId ? { ...seat, instrumentId: undefined } : seat
+              if (cleaned.instrumentId || cleaned.section !== undefined || cleaned.position !== undefined) {
+                seats[playerId] = cleaned
+              }
+            }
+            return { ...pc, seats: Object.keys(seats).length > 0 ? seats : undefined }
+          })
+        : p.pieces,
+    }))
+
+  const removeSet = () => update((p) => ({ ...p, sets: p.sets.filter((s) => s.id !== setId) }))
+
+  return (
+    <div className="card">
+      <div className="card-head">
+        <strong>{set.name}</strong>
+        <span className="hint">{set.items.length} item{set.items.length === 1 ? '' : 's'}</span>
+        <span className="spacer" />
+        {set.id !== INSTRUMENTS_SET_ID && (
+          <button className="link danger" onClick={removeSet}>Delete set</button>
+        )}
+      </div>
+      <table className="set-table">
+        <tbody>
+          {set.items.map((it) => (
+            <tr key={it.id}>
+              <td className="set-code">{it.code}</td>
+              <td>{it.label}</td>
+              <td className="set-actions">
+                <button className="link danger" onClick={() => removeItem(it.id)} aria-label={`Delete ${it.label}`}>✕</button>
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+      <form className="add-row" onSubmit={(e) => { e.preventDefault(); addItem() }}>
+        <input className="code-input" placeholder="Code (e.g. fg)" value={code} onChange={(e) => setCode(e.target.value)} />
+        <input placeholder="Name (e.g. bassoon)" value={label} onChange={(e) => setLabel(e.target.value)} />
+        <button type="submit" disabled={!code.trim() || !label.trim()}>Add</button>
+      </form>
+    </div>
+  )
 }
 
 // -------------------------------------------------------------------- settings
