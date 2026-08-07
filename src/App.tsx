@@ -9,7 +9,9 @@ import {
   downloadProject,
   listProjectFiles,
   loadAutosave,
+  loadMirror,
   loadProjectFromFolder,
+  requestPersistentStorage,
   restoreFolder,
   saveProjectToFolder,
   supportsFileSystemAccess,
@@ -17,7 +19,7 @@ import {
 } from './storage'
 import './App.css'
 
-type Tab = 'players' | 'pieces' | 'matrix' | 'scheduler' | 'config' | 'settings'
+type Tab = 'players' | 'pieces' | 'matrix' | 'scheduler' | 'config'
 
 /** A drill-down page opened from the Players or Pieces tab. */
 type Detail = { kind: 'player' | 'piece'; id: string }
@@ -26,6 +28,9 @@ export default function App() {
   const [project, setProject] = useState<Project | null>(() => loadAutosave())
   const [tab, setTab] = useState<Tab>('players')
   const [detail, setDetail] = useState<Detail | null>(null)
+  // True when the project differs from the last file save/load. Autosave to
+  // browser storage does not count — only an exported file is safe.
+  const [dirty, setDirty] = useState(false)
   const [folder, setFolder] = useState<FileSystemDirectoryHandle | null>(null)
   const [status, setStatus] = useState('')
 
@@ -34,8 +39,26 @@ export default function App() {
   }, [project])
 
   useEffect(() => {
+    requestPersistentStorage()
     if (supportsFileSystemAccess) restoreFolder().then((h) => h && setFolder(h))
   }, [])
+
+  // localStorage can be purged by the browser (notably iOS Safari) — if it
+  // came up empty, fall back to the IndexedDB mirror of the working project.
+  useEffect(() => {
+    if (!project) loadMirror().then((p) => p && setProject((prev) => prev ?? p))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
+  useEffect(() => {
+    if (!dirty) return
+    const warn = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', warn)
+    return () => window.removeEventListener('beforeunload', warn)
+  }, [dirty])
 
   const flash = useCallback((msg: string) => {
     setStatus(msg)
@@ -44,10 +67,16 @@ export default function App() {
 
   const update = useCallback((fn: (p: Project) => Project) => {
     setProject((p) => (p ? fn(p) : p))
+    setDirty(true)
   }, [])
 
   if (!project) {
-    return <StartScreen onCreate={(name) => setProject(createProject(name))} onOpen={setProject} />
+    return (
+      <StartScreen
+        onCreate={(name) => { setProject(createProject(name)); setDirty(true) }}
+        onOpen={(p) => { setProject(p); setDirty(false) }}
+      />
+    )
   }
 
   return (
@@ -65,8 +94,10 @@ export default function App() {
             project={project}
             folder={folder}
             setFolder={setFolder}
-            onLoaded={(p) => { setProject(p); setDetail(null); flash(`Loaded “${p.name}”`) }}
-            onNew={() => { setProject(createProject('New project')); setDetail(null); setTab('players') }}
+            dirty={dirty}
+            onSaved={() => setDirty(false)}
+            onLoaded={(p) => { setProject(p); setDirty(false); setDetail(null); flash(`Loaded “${p.name}”`) }}
+            onNew={() => { setProject(createProject('New project')); setDirty(true); setDetail(null); setTab('players') }}
             flash={flash}
           />
         </div>
@@ -80,7 +111,6 @@ export default function App() {
             ['matrix', 'Assignments'],
             ['scheduler', 'Scheduler'],
             ['config', 'Configuration'],
-            ['settings', 'Settings'],
           ] as [Tab, string][]
         ).map(([t, label]) => (
           <button
@@ -104,7 +134,6 @@ export default function App() {
             {tab === 'matrix' && <MatrixView project={project} update={update} />}
             {tab === 'scheduler' && <SchedulerView project={project} />}
             {tab === 'config' && <ConfigView project={project} update={update} />}
-            {tab === 'settings' && <SettingsView project={project} update={update} />}
           </>
         )}
       </main>
@@ -139,16 +168,21 @@ function StartScreen({ onCreate, onOpen }: { onCreate: (name: string) => void; o
 // ------------------------------------------------------------------- file menu
 
 function FileMenu({
-  project, folder, setFolder, onLoaded, onNew, flash,
+  project, folder, setFolder, dirty, onSaved, onLoaded, onNew, flash,
 }: {
   project: Project
   folder: FileSystemDirectoryHandle | null
   setFolder: (h: FileSystemDirectoryHandle | null) => void
+  dirty: boolean
+  onSaved: () => void
   onLoaded: (p: Project) => void
   onNew: () => void
   flash: (msg: string) => void
 }) {
   const [files, setFiles] = useState<string[] | null>(null)
+
+  const confirmDiscard = () =>
+    !dirty || window.confirm('You have unsaved changes — discard them?')
 
   const save = async () => {
     try {
@@ -159,12 +193,14 @@ function FileMenu({
         downloadProject(project)
         flash('Project downloaded')
       }
+      onSaved()
     } catch (e) {
       flash(`Save failed: ${(e as Error).message}`)
     }
   }
 
   const open = async () => {
+    if (!confirmDiscard()) return
     try {
       if (folder) {
         setFiles(await listProjectFiles(folder))
@@ -186,9 +222,11 @@ function FileMenu({
 
   return (
     <>
-      <button onClick={onNew}>New</button>
+      <button onClick={() => { if (confirmDiscard()) onNew() }}>New</button>
       <button onClick={open}>Open</button>
-      <button className="primary" onClick={save}>Save</button>
+      <button className="primary" onClick={save} title={dirty ? 'You have unsaved changes' : 'All changes saved to file'}>
+        Save{dirty && <span className="unsaved-dot" aria-label="unsaved changes"> ●</span>}
+      </button>
       {supportsFileSystemAccess && (
         <button onClick={connect} title="Connect a folder on your computer to save/load projects">
           {folder ? `📁 ${folder.name}` : '📁 Connect folder'}
@@ -918,6 +956,12 @@ function ConfigView({ project, update }: { project: Project; update: (fn: (p: Pr
 
   return (
     <section className="config">
+      <h3 className="config-heading">Rehearsal settings</h3>
+      <div className="card">
+        <SettingsView project={project} update={update} />
+      </div>
+
+      <h3 className="config-heading">Sets</h3>
       <p className="hint">
         Sets are reusable lists used elsewhere in the app — the Instruments set feeds the instrument choice on
         the piece and player detail pages.

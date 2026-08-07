@@ -20,34 +20,40 @@ type DirHandle = FileSystemDirectoryHandle
 
 const DB_NAME = 'rehearsal-planner'
 const STORE = 'handles'
+const BACKUP_STORE = 'backups'
 
 function openDb(): Promise<IDBDatabase> {
   return new Promise((resolve, reject) => {
-    const req = indexedDB.open(DB_NAME, 1)
-    req.onupgradeneeded = () => req.result.createObjectStore(STORE)
+    const req = indexedDB.open(DB_NAME, 2)
+    req.onupgradeneeded = () => {
+      const db = req.result
+      if (!db.objectStoreNames.contains(STORE)) db.createObjectStore(STORE)
+      if (!db.objectStoreNames.contains(BACKUP_STORE)) db.createObjectStore(BACKUP_STORE)
+    }
     req.onsuccess = () => resolve(req.result)
     req.onerror = () => reject(req.error)
   })
 }
 
-async function idbSet(key: string, value: unknown): Promise<void> {
+async function idbSet(key: string, value: unknown, store: string = STORE): Promise<void> {
   const db = await openDb()
   return new Promise((resolve, reject) => {
-    const tx = db.transaction(STORE, 'readwrite')
-    tx.objectStore(STORE).put(value, key)
+    const tx = db.transaction(store, 'readwrite')
+    tx.objectStore(store).put(value, key)
     tx.oncomplete = () => resolve()
     tx.onerror = () => reject(tx.error)
   })
 }
 
-async function idbGet<T>(key: string): Promise<T | undefined> {
+async function idbGet<T>(key: string, store: string = STORE): Promise<T | undefined> {
   const db = await openDb()
   return new Promise((resolve, reject) => {
-    const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(key)
+    const req = db.transaction(store, 'readonly').objectStore(store).get(key)
     req.onsuccess = () => resolve(req.result as T | undefined)
     req.onerror = () => reject(req.error)
   })
 }
+
 
 // ---- Folder connection -----------------------------------------------------
 
@@ -136,22 +142,55 @@ export function uploadProject(): Promise<Project> {
   })
 }
 
-// ---- Working-copy autosave (localStorage) ----------------------------------
+// ---- Working-copy autosave (localStorage + IndexedDB mirror) ---------------
+//
+// iOS Safari purges site storage under storage pressure or after ~7 days
+// without a visit, which showed up as "the project is suddenly empty". The
+// working copy therefore lives in BOTH localStorage and IndexedDB: when
+// localStorage comes up empty at startup, the app silently restores the
+// project from the IndexedDB mirror. Exported project files remain the only
+// guaranteed persistence, so the UI flags unsaved changes.
 
 const LS_KEY = 'rehearsal-planner.current'
+const MIRROR_CURRENT = '@current'
+
+/** Ask the browser to exempt this origin's storage from automatic eviction. */
+export function requestPersistentStorage(): void {
+  try {
+    navigator.storage?.persist?.().catch(() => {})
+  } catch {
+    // not supported — best effort only
+  }
+}
+
+let mirrorTimer: number | undefined
 
 export function autosave(project: Project): void {
   try {
     localStorage.setItem(LS_KEY, JSON.stringify(project))
   } catch {
-    // quota exceeded / private mode — autosave is best-effort only
+    // quota exceeded / private mode — localStorage copy is best-effort
   }
+  clearTimeout(mirrorTimer)
+  mirrorTimer = window.setTimeout(() => {
+    idbSet(MIRROR_CURRENT, project, BACKUP_STORE).catch(() => {})
+  }, 800)
 }
 
 export function loadAutosave(): Project | null {
   try {
     const raw = localStorage.getItem(LS_KEY)
     return raw ? parseProject(JSON.parse(raw)) : null
+  } catch {
+    return null
+  }
+}
+
+/** Fallback when localStorage was purged: the IndexedDB copy of the working project. */
+export async function loadMirror(): Promise<Project | null> {
+  try {
+    const stored = await idbGet<unknown>(MIRROR_CURRENT, BACKUP_STORE)
+    return stored ? parseProject(stored) : null
   } catch {
     return null
   }
