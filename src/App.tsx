@@ -1,8 +1,8 @@
 import { useCallback, useEffect, useMemo, useState, type ClipboardEvent, type CSSProperties } from 'react'
 import { createProject, INSTRUMENTS_SET_ID, newId, type Piece, type Project, type Seat } from './types'
-import { findCombinations } from './combinations'
+import { findCombinations, type Combination } from './combinations'
 import { inkFor, PASTEL_PALETTE } from './colors'
-import { exportCombinations } from './excel'
+import { exportCombinationPlan } from './excel'
 import {
   autosave,
   connectFolder,
@@ -133,7 +133,7 @@ export default function App() {
             {tab === 'players' && <PlayersView project={project} update={update} onOpen={(id) => setDetail({ kind: 'player', id })} />}
             {tab === 'pieces' && <PiecesView project={project} update={update} onOpen={(id) => setDetail({ kind: 'piece', id })} />}
             {tab === 'matrix' && <MatrixView project={project} update={update} />}
-            {tab === 'scheduler' && <SchedulerView project={project} />}
+            {tab === 'scheduler' && <SchedulerView project={project} update={update} />}
             {tab === 'config' && <ConfigView project={project} update={update} />}
           </>
         )}
@@ -658,9 +658,9 @@ function MatrixView({ project, update }: { project: Project; update: (fn: (p: Pr
 
 // ------------------------------------------------------------------- scheduler
 
-function SchedulerView({ project }: { project: Project }) {
+function SchedulerView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
   const [selectedPieceIds, setSelectedPieceIds] = useState<Set<string>>(new Set())
-  const [selectedCombos, setSelectedCombos] = useState<Set<number>>(new Set())
+  const [selectedCombo, setSelectedCombo] = useState<Combination | null>(null)
   const [onlyMaximal, setOnlyMaximal] = useState(true)
   const [shown, setShown] = useState(100)
 
@@ -675,7 +675,7 @@ function SchedulerView({ project }: { project: Project }) {
       else next.add(id)
       return next
     })
-    setSelectedCombos(new Set())
+    setSelectedCombo(null)
     setShown(100)
   }
 
@@ -689,17 +689,15 @@ function SchedulerView({ project }: { project: Project }) {
     [result, onlyMaximal],
   )
 
-  const toggleCombo = (idx: number) =>
-    setSelectedCombos((s) => {
-      const next = new Set(s)
-      if (next.has(idx)) next.delete(idx)
-      else next.add(idx)
-      return next
-    })
-
-  const exportSelected = () => {
-    const combos = visible.filter((_, i) => selectedCombos.has(i))
-    exportCombinations(project, combos)
+  if (selectedCombo) {
+    return (
+      <CombinationDetailView
+        project={project}
+        combination={selectedCombo}
+        update={update}
+        onBack={() => setSelectedCombo(null)}
+      />
+    )
   }
 
   return (
@@ -708,10 +706,10 @@ function SchedulerView({ project }: { project: Project }) {
         <div className="panel-head">
           <h3>1 · Select pieces to rehearse</h3>
           <span className="spacer" />
-          <button className="link" onClick={() => { setSelectedPieceIds(new Set(project.pieces.map((p) => p.id))); setSelectedCombos(new Set()) }}>
+          <button className="link" onClick={() => setSelectedPieceIds(new Set(project.pieces.map((p) => p.id)))}>
             Select all
           </button>
-          <button className="link" onClick={() => { setSelectedPieceIds(new Set()); setSelectedCombos(new Set()) }}>
+          <button className="link" onClick={() => setSelectedPieceIds(new Set())}>
             Clear
           </button>
         </div>
@@ -731,7 +729,7 @@ function SchedulerView({ project }: { project: Project }) {
           <h3>2 · Concurrent combinations <small>(max {project.settings.venues} venues, most players utilised first)</small></h3>
           <span className="spacer" />
           <label className="check">
-            <input type="checkbox" checked={onlyMaximal} onChange={(e) => { setOnlyMaximal(e.target.checked); setSelectedCombos(new Set()) }} />
+            <input type="checkbox" checked={onlyMaximal} onChange={(e) => setOnlyMaximal(e.target.checked)} />
             Only full groupings (no piece could be added)
           </label>
         </div>
@@ -745,13 +743,13 @@ function SchedulerView({ project }: { project: Project }) {
               <p className="warn">Too many combinations — showing the first {result.combinations.length.toLocaleString()} found. Narrow the piece selection.</p>
             )}
             <p className="hint">
-              {visible.length.toLocaleString()} combination{visible.length === 1 ? '' : 's'} · tick the ones you want, then export.
+              {visible.length.toLocaleString()} combination{visible.length === 1 ? '' : 's'} · click one to review venues,
+              seats and idle activities, then download it.
             </p>
             <ol className="combos">
               {visible.slice(0, shown).map((c, i) => (
-                <li key={i} className={selectedCombos.has(i) ? 'combo selected' : 'combo'}>
-                  <label className="combo-row">
-                    <input type="checkbox" checked={selectedCombos.has(i)} onChange={() => toggleCombo(i)} />
+                <li key={i} className="combo">
+                  <button className="combo-row" onClick={() => setSelectedCombo(c)}>
                     <div className="combo-body">
                       <div className="combo-pieces">
                         {c.pieceIds.map((id) => (
@@ -769,7 +767,8 @@ function SchedulerView({ project }: { project: Project }) {
                         )}
                       </div>
                     </div>
-                  </label>
+                    <span className="combo-open">Review →</span>
+                  </button>
                 </li>
               ))}
             </ol>
@@ -780,14 +779,6 @@ function SchedulerView({ project }: { project: Project }) {
         )}
       </div>
 
-      <div className="panel">
-        <div className="panel-head">
-          <h3>3 · Export</h3>
-        </div>
-        <button className="primary" disabled={selectedCombos.size === 0} onClick={exportSelected}>
-          Download {selectedCombos.size || ''} selected combination{selectedCombos.size === 1 ? '' : 's'} as Excel
-        </button>
-      </div>
     </section>
   )
 
@@ -795,6 +786,158 @@ function SchedulerView({ project }: { project: Project }) {
     const pc = p.pieces.find((x) => x.id === pieceId)
     return (pc?.playerIds ?? []).map((id) => playerName.get(id) ?? '?').join(', ')
   }
+}
+
+// ------------------------------------------------------- combination detail
+
+/**
+ * Review page for one combination: pieces spread over venues (venue numbers
+ * are swappable — they never affect the conflict constraints), every playing
+ * player's seat with missing instrument/position highlighted and editable,
+ * idle players with a free activity text, and the Excel download.
+ */
+function CombinationDetailView({ project, combination, update, onBack }: {
+  project: Project
+  combination: Combination
+  update: (fn: (p: Project) => Project) => void
+  onBack: () => void
+}) {
+  const venues = project.settings.venues
+  const [venueOf, setVenueOf] = useState<Record<string, number>>(() =>
+    Object.fromEntries(combination.pieceIds.map((id, i) => [id, i + 1])),
+  )
+  const [activities, setActivities] = useState<Record<string, string>>({})
+
+  const playerName = useMemo(() => new Map(project.players.map((p) => [p.id, p.name])), [project.players])
+
+  // Assigning a piece to an occupied venue swaps the two pieces.
+  const moveToVenue = (pieceId: string, venue: number) =>
+    setVenueOf((v) => {
+      const occupant = Object.keys(v).find((id) => v[id] === venue)
+      const next = { ...v, [pieceId]: venue }
+      if (occupant && occupant !== pieceId) next[occupant] = v[pieceId]
+      return next
+    })
+
+  const download = () =>
+    exportCombinationPlan(project, { combination, venueOf, activities })
+
+  const missingSeats = combination.pieceIds.reduce((acc, pieceId) => {
+    const piece = project.pieces.find((pc) => pc.id === pieceId)
+    if (!piece) return acc
+    return acc + piece.playerIds.filter((id) => {
+      const seat = piece.seats?.[id]
+      return !seat?.instrumentId || seat?.position === undefined
+    }).length
+  }, 0)
+
+  return (
+    <section>
+      <div className="detail-head">
+        <button className="link" onClick={onBack}>← Back to combinations</button>
+        <h2>Session plan</h2>
+        <p className="hint">
+          One {project.settings.sessionMinutes} min session · {combination.playerIds.length} of{' '}
+          {project.players.length} players busy. Venue numbers can be swapped freely — they don&apos;t affect
+          the conflict constraints.
+        </p>
+        {missingSeats > 0 && (
+          <p className="warn">
+            {missingSeats} seat{missingSeats === 1 ? ' is' : 's are'} missing an instrument or position —
+            highlighted below, fix them right here.
+          </p>
+        )}
+      </div>
+
+      <div className="venues">
+        {Array.from({ length: venues }, (_, i) => i + 1).map((venue) => {
+          const pieceId = combination.pieceIds.find((id) => venueOf[id] === venue)
+          const piece = pieceId ? project.pieces.find((pc) => pc.id === pieceId) : undefined
+          return (
+            <div key={venue} className="panel venue-panel">
+              <div className="panel-head">
+                <h3>Venue {venue}</h3>
+                {piece && (
+                  <>
+                    <span className="chip big" style={pieceChipStyle(piece)}>{piece.name}</span>
+                    <span className="spacer" />
+                    <label className="venue-move">
+                      Move to
+                      <select value={venue} onChange={(e) => moveToVenue(piece.id, parseInt(e.target.value, 10))}>
+                        {Array.from({ length: venues }, (_, i) => i + 1).map((v) => (
+                          <option key={v} value={v}>Venue {v}</option>
+                        ))}
+                      </select>
+                    </label>
+                  </>
+                )}
+              </div>
+              {!piece ? (
+                <p className="hint">No piece in this venue.</p>
+              ) : piece.playerIds.length === 0 ? (
+                <p className="hint">No players assigned to this piece.</p>
+              ) : (
+                <table className="seat-table">
+                  <thead>
+                    <tr><th>Player</th><th>Instrument</th><th>Section</th><th>Position</th></tr>
+                  </thead>
+                  <tbody>
+                    {project.players.filter((pl) => piece.playerIds.includes(pl.id)).map((pl) => {
+                      const seat = piece.seats?.[pl.id]
+                      const missing = !seat?.instrumentId || seat?.position === undefined
+                      return (
+                        <tr key={pl.id} className={missing ? 'missing-seat' : ''}>
+                          <th>
+                            {pl.name}
+                            {missing && <span className="missing-mark" title="Instrument or position missing"> ⚠</span>}
+                          </th>
+                          <SeatEditor project={project} piece={piece} playerId={pl.id} update={update} />
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              )}
+            </div>
+          )
+        })}
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h3>Idle players</h3>
+        </div>
+        {combination.idlePlayerIds.length === 0 ? (
+          <p className="hint">Everyone plays in this combination 🎉</p>
+        ) : (
+          <table className="seat-table">
+            <thead>
+              <tr><th>Player</th><th>Activity</th></tr>
+            </thead>
+            <tbody>
+              {combination.idlePlayerIds.map((id) => (
+                <tr key={id}>
+                  <th>{playerName.get(id) ?? '?'}</th>
+                  <td>
+                    <input
+                      className="activity-input"
+                      placeholder="e.g. self study, coaching…"
+                      value={activities[id] ?? ''}
+                      onChange={(e) => setActivities((a) => ({ ...a, [id]: e.target.value }))}
+                    />
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      <div className="detail-actions">
+        <button className="primary" onClick={download}>Download session plan as Excel</button>
+      </div>
+    </section>
+  )
 }
 
 // ------------------------------------------------------------------ seat editor
