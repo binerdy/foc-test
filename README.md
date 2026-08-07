@@ -29,8 +29,11 @@ as few players as possible sit around doing nothing.
   rejected with an inline error. Click a player to see and edit the same data from the
   player's perspective across all their pieces. Seating appears in the Excel export as
   e.g. `Anna (vl 1.2)`.
-- **Excel export** — tick any number of combinations and download them as an `.xlsx`
-  file (overview, per-piece detail, and the full assignment matrix).
+- **Combination review & export** — click a combination to open its session plan:
+  pieces laid out per venue (venue numbers freely swappable — they never affect the
+  conflict constraints), every player's instrument/section/position editable inline
+  with missing instruments or positions highlighted, an activity text per idle player
+  (self study, coaching, …), and a one-click Excel download of the plan.
 - **Settings** — number of venues (default 4), session duration (default 50 min,
   including the 10 min break), sessions per morning (default 4) and afternoon
   (default 3). Since every rehearsal block has the same length, piece duration is
