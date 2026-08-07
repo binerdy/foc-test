@@ -8,6 +8,9 @@ as few players as possible sit around doing nothing.
 - **Projects** — create a project, rename it any time.
 - **Players** — add players by first name.
 - **Pieces** — add pieces by name.
+- **Bulk paste** — copy a column or row of names in Excel/Google Sheets and paste it
+  into the add field (or use the "Paste list" button) to add many players or pieces at
+  once; duplicates are skipped automatically.
 - **Assignments** — assign players to pieces from either side (pick a piece and tick
   players, or pick a player and tick pieces), plus a combined player × piece matrix
   view where every assignment is visible and toggleable at a glance.
