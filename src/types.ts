@@ -75,6 +75,9 @@ export interface Project {
   players: Player[]
   pieces: Piece[]
   sets: ConfigSet[]
+  /** Pastel colour per number (key = the number as string), used to colour-code
+   *  Section and Position values for users who associate numbers with colours. */
+  numberColors: Record<string, string>
 }
 
 export const DEFAULT_SETTINGS: ProjectSettings = {
@@ -92,6 +95,7 @@ export function createProject(name: string): Project {
     players: [],
     pieces: [],
     sets: defaultSets(),
+    numberColors: {},
   }
 }
 
@@ -148,5 +152,11 @@ export function parseProject(data: unknown): Project {
         ...(Object.keys(seats).length > 0 ? { seats } : {}),
       }
     })
-  return { formatVersion: 1, name: d.name, settings, players, pieces, sets }
+  const numberColors: Record<string, string> = {}
+  if (typeof d.numberColors === 'object' && d.numberColors !== null) {
+    for (const [k, v] of Object.entries(d.numberColors as Record<string, unknown>)) {
+      if (/^\d+$/.test(k) && typeof v === 'string') numberColors[k] = v
+    }
+  }
+  return { formatVersion: 1, name: d.name, settings, players, pieces, sets, numberColors }
 }

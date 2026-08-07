@@ -388,6 +388,16 @@ function NameAdder({
   )
 }
 
+const byName = (a: { name: string }, b: { name: string }) =>
+  a.name.localeCompare(b.name, undefined, { sensitivity: 'base', numeric: true })
+
+/** Pastel background + complementary ink for a colour-coded number, if configured. */
+function numberColorStyle(project: Project, n: number | undefined): CSSProperties | undefined {
+  if (n === undefined) return undefined
+  const color = project.numberColors[String(n)]
+  return color ? { background: color, color: inkFor(color) } : undefined
+}
+
 /** Chip styling for a piece: its pastel colour with complementary ink, if set. */
 function pieceChipStyle(piece: Piece | undefined): CSSProperties | undefined {
   if (!piece?.color) return undefined
@@ -456,7 +466,7 @@ function PlayersView({ project, update, onOpen }: {
         <p className="hint">No players yet. Add one above — or copy a column of names from Excel/Google Sheets and paste it into the field.</p>
       )}
       <ul className="cards">
-        {project.players.map((pl) => {
+        {[...project.players].sort(byName).map((pl) => {
           const pieces = project.pieces.filter((pc) => pc.playerIds.includes(pl.id))
           const open = openId === pl.id
           return (
@@ -536,7 +546,7 @@ function PiecesView({ project, update, onOpen }: {
         <p className="hint">No pieces yet. Add one above — or copy a column of names from Excel/Google Sheets and paste it into the field.</p>
       )}
       <ul className="cards">
-        {project.pieces.map((pc) => {
+        {[...project.pieces].sort(byName).map((pc) => {
           const open = openId === pc.id
           const players = project.players.filter((pl) => pc.playerIds.includes(pl.id))
           return (
@@ -1012,6 +1022,7 @@ function SeatEditor({ project, piece, playerId, update }: {
           type="number"
           min={1}
           className="seat-num"
+          style={numberColorStyle(project, seat.section)}
           value={seat.section ?? ''}
           onChange={(e) => {
             const n = parseInt(e.target.value, 10)
@@ -1024,6 +1035,7 @@ function SeatEditor({ project, piece, playerId, update }: {
           type="number"
           min={1}
           className={error ? 'seat-num invalid' : 'seat-num'}
+          style={numberColorStyle(project, seat.position)}
           value={posText}
           onChange={(e) => onPosition(e.target.value)}
           onBlur={() => { if (error) { setPosText(seat.position?.toString() ?? ''); setError('') } }}
@@ -1154,7 +1166,73 @@ function ConfigView({ project, update }: { project: Project; update: (fn: (p: Pr
         <input placeholder="New set name…" value={newSetName} onChange={(e) => setNewSetName(e.target.value)} />
         <button type="submit" disabled={!newSetName.trim()}>Add set</button>
       </form>
+
+      <h3 className="config-heading">Number colours</h3>
+      <NumberColorsCard project={project} update={update} />
     </section>
+  )
+}
+
+function NumberColorsCard({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
+  const [numText, setNumText] = useState('')
+  const n = parseInt(numText, 10)
+  const validNumber = Number.isFinite(n) && n >= 0
+
+  const setColor = (color: string) => {
+    if (!validNumber) return
+    update((p) => ({ ...p, numberColors: { ...p.numberColors, [String(n)]: color } }))
+    setNumText('')
+  }
+
+  const remove = (key: string) =>
+    update((p) => {
+      const numberColors = { ...p.numberColors }
+      delete numberColors[key]
+      return { ...p, numberColors }
+    })
+
+  const entries = Object.entries(project.numberColors).sort((a, b) => Number(a[0]) - Number(b[0]))
+
+  return (
+    <div className="card">
+      <p className="hint">
+        Give a number a colour and every Section and Position value shows it — for readers who
+        associate numbers with colours.
+      </p>
+      {entries.length > 0 && (
+        <div className="num-list">
+          {entries.map(([key, color]) => (
+            <span key={key} className="num-badge" style={{ background: color, color: inkFor(color) }}>
+              {key}
+              <button className="num-remove" aria-label={`Remove colour for ${key}`} onClick={() => remove(key)}>✕</button>
+            </span>
+          ))}
+        </div>
+      )}
+      <div className="add-row">
+        <input
+          type="number"
+          min={0}
+          className="code-input"
+          placeholder="Number…"
+          value={numText}
+          onChange={(e) => setNumText(e.target.value)}
+        />
+        <div className="palette inline-palette">
+          {PASTEL_PALETTE.map((c) => (
+            <button
+              key={c}
+              className="swatch"
+              style={{ background: c }}
+              disabled={!validNumber}
+              title={validNumber ? `Colour ${n} in ${c}` : 'Enter a number first'}
+              aria-label={`Colour ${c}`}
+              onClick={() => setColor(c)}
+            />
+          ))}
+        </div>
+      </div>
+    </div>
   )
 }
 
