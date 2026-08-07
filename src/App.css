@@ -348,6 +348,8 @@ select {
 }
 .combo-body { flex: 1; }
 .combo-open { color: var(--accent); white-space: nowrap; font-size: 0.9rem; }
+.session-title { margin-bottom: 4px; }
+.combo-row:disabled { cursor: default; opacity: 0.7; }
 .combo-pieces { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .combo-meta { font-size: 0.9rem; color: var(--muted); }
 .combo-meta strong { color: var(--text); }

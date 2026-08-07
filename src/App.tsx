@@ -2,7 +2,8 @@ import { useCallback, useEffect, useMemo, useState, type ClipboardEvent, type CS
 import { createProject, INSTRUMENTS_SET_ID, newId, type Piece, type Project, type Seat } from './types'
 import { findCombinations, type Combination } from './combinations'
 import { inkFor, PASTEL_PALETTE } from './colors'
-import { exportCombinationPlan } from './excel'
+import { exportCombinationPlan, exportDayPlan } from './excel'
+import { overbookedPlayers, planDay, type DayPlan } from './dayplan'
 import {
   autosave,
   connectFolder,
@@ -671,8 +672,14 @@ function MatrixView({ project, update }: { project: Project; update: (fn: (p: Pr
 function SchedulerView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
   const [selectedPieceIds, setSelectedPieceIds] = useState<Set<string>>(new Set())
   const [selectedCombo, setSelectedCombo] = useState<Combination | null>(null)
+  const [dayPlan, setDayPlan] = useState<DayPlan | null>(null)
+  const [daySeed, setDaySeed] = useState(1)
+  const [reviewSession, setReviewSession] = useState<number | null>(null)
   const [onlyMaximal, setOnlyMaximal] = useState(true)
   const [shown, setShown] = useState(100)
+
+  const sessionCount = project.settings.morningSessions + project.settings.afternoonSessions
+  const capacity = sessionCount * project.settings.venues
 
   const playerName = useMemo(() => new Map(project.players.map((p) => [p.id, p.name])), [project.players])
   const pieceName = useMemo(() => new Map(project.pieces.map((p) => [p.id, p.name])), [project.pieces])
@@ -686,7 +693,20 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
       return next
     })
     setSelectedCombo(null)
+    setDayPlan(null)
+    setReviewSession(null)
     setShown(100)
+  }
+
+  const selectedPieces = useMemo(
+    () => project.pieces.filter((pc) => selectedPieceIds.has(pc.id)),
+    [project.pieces, selectedPieceIds],
+  )
+
+  const makePlan = (seed: number) => {
+    setDaySeed(seed)
+    setDayPlan(planDay(selectedPieces, project.players, project.settings.venues, sessionCount, seed))
+    setReviewSession(null)
   }
 
   const result = useMemo(() => {
@@ -698,6 +718,20 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
     () => (onlyMaximal ? result.combinations.filter((c) => c.maximal) : result.combinations),
     [result, onlyMaximal],
   )
+
+  if (reviewSession !== null && dayPlan) {
+    const session = dayPlan.sessions[reviewSession]
+    return (
+      <CombinationDetailView
+        project={project}
+        combination={{ ...session, maximal: true }}
+        update={update}
+        onBack={() => setReviewSession(null)}
+        title={`Session ${reviewSession + 1} · ${reviewSession < project.settings.morningSessions ? 'morning' : 'afternoon'}`}
+        backLabel="← Back to day plan"
+      />
+    )
+  }
 
   if (selectedCombo) {
     return (
@@ -736,7 +770,95 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
 
       <div className="panel">
         <div className="panel-head">
-          <h3>2 · Concurrent combinations <small>(max {project.settings.venues} venues, most players utilised first)</small></h3>
+          <h3>
+            2 · Day plan{' '}
+            <small>({sessionCount} sessions × {project.settings.venues} venues = room for {capacity} pieces)</small>
+          </h3>
+          <span className="spacer" />
+          {dayPlan && (
+            <button onClick={() => makePlan(daySeed + 1)}>Try another arrangement</button>
+          )}
+          <button className="primary" onClick={() => makePlan(daySeed)} disabled={selectedPieceIds.size === 0}>
+            Plan the day
+          </button>
+        </div>
+        {selectedPieceIds.size > capacity && (
+          <p className="warn">
+            {selectedPieceIds.size} pieces selected but the day only has room for {capacity} —
+            at least {selectedPieceIds.size - capacity} will stay unplaced.
+          </p>
+        )}
+        {!dayPlan ? (
+          <p className="hint">
+            Distributes every selected piece over the day&apos;s sessions so that no player is needed in two
+            venues of the same session. Each piece is rehearsed once.
+          </p>
+        ) : (
+          <>
+            {!dayPlan.complete && (
+              <p className="warn">
+                Not all pieces fit: {dayPlan.unplacedPieceIds.map((id) => pieceName.get(id) ?? '?').join(', ')}{' '}
+                stay unplaced.
+                {overbookedPlayers(selectedPieces, sessionCount).map(({ playerId, count }) => (
+                  <span key={playerId}>
+                    {' '}{playerName.get(playerId) ?? '?'} plays in {count} pieces but the day has only{' '}
+                    {sessionCount} sessions.
+                  </span>
+                ))}
+              </p>
+            )}
+            <ol className="combos">
+              {dayPlan.sessions.map((session, i) => (
+                <li key={i} className="combo">
+                  <button
+                    className="combo-row"
+                    onClick={() => session.pieceIds.length > 0 && setReviewSession(i)}
+                    disabled={session.pieceIds.length === 0}
+                  >
+                    <div className="combo-body">
+                      <div className="session-title">
+                        <strong>Session {i + 1}</strong>{' '}
+                        <small className="hint">{i < project.settings.morningSessions ? 'morning' : 'afternoon'}</small>
+                      </div>
+                      {session.pieceIds.length === 0 ? (
+                        <div className="combo-meta">— free —</div>
+                      ) : (
+                        <>
+                          <div className="combo-pieces">
+                            {session.pieceIds.map((id) => (
+                              <span key={id} className="chip big" style={pieceChipStyle(pieceById.get(id))}>
+                                {pieceName.get(id)}
+                              </span>
+                            ))}
+                          </div>
+                          <div className="combo-meta">
+                            <strong>{session.playerIds.length}</strong> of {project.players.length} players busy
+                            {session.idlePlayerIds.length > 0 ? (
+                              <span className="idle"> · idle: {session.idlePlayerIds.map((id) => playerName.get(id)).join(', ')}</span>
+                            ) : (
+                              <span className="all-busy"> · everyone plays 🎉</span>
+                            )}
+                          </div>
+                        </>
+                      )}
+                    </div>
+                    {session.pieceIds.length > 0 && <span className="combo-open">Review →</span>}
+                  </button>
+                </li>
+              ))}
+            </ol>
+            <div className="detail-actions">
+              <button className="primary" onClick={() => exportDayPlan(project, dayPlan, project.settings.morningSessions)}>
+                Download day plan as Excel
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+
+      <div className="panel">
+        <div className="panel-head">
+          <h3>3 · Single-session combinations <small>(max {project.settings.venues} venues, most players utilised first)</small></h3>
           <span className="spacer" />
           <label className="check">
             <input type="checkbox" checked={onlyMaximal} onChange={(e) => setOnlyMaximal(e.target.checked)} />
@@ -806,11 +928,13 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
  * player's seat with missing instrument/position highlighted and editable,
  * idle players with a free activity text, and the Excel download.
  */
-function CombinationDetailView({ project, combination, update, onBack }: {
+function CombinationDetailView({ project, combination, update, onBack, title = 'Session plan', backLabel = '← Back to combinations' }: {
   project: Project
   combination: Combination
   update: (fn: (p: Project) => Project) => void
   onBack: () => void
+  title?: string
+  backLabel?: string
 }) {
   const venues = project.settings.venues
   const [venueOf, setVenueOf] = useState<Record<string, number>>(() =>
@@ -844,8 +968,8 @@ function CombinationDetailView({ project, combination, update, onBack }: {
   return (
     <section>
       <div className="detail-head">
-        <button className="link" onClick={onBack}>← Back to combinations</button>
-        <h2>Session plan</h2>
+        <button className="link" onClick={onBack}>{backLabel}</button>
+        <h2>{title}</h2>
         <p className="hint">
           One {project.settings.sessionMinutes} min session · {combination.playerIds.length} of{' '}
           {project.players.length} players busy. Venue numbers can be swapped freely — they don&apos;t affect
