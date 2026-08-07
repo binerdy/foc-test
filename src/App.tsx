@@ -7,13 +7,18 @@ import {
   autosave,
   connectFolder,
   downloadProject,
+  listBackups,
   listProjectFiles,
   loadAutosave,
+  loadBackup,
+  loadMirror,
   loadProjectFromFolder,
+  requestPersistentStorage,
   restoreFolder,
   saveProjectToFolder,
   supportsFileSystemAccess,
   uploadProject,
+  type BackupInfo,
 } from './storage'
 import './App.css'
 
@@ -34,7 +39,15 @@ export default function App() {
   }, [project])
 
   useEffect(() => {
+    requestPersistentStorage()
     if (supportsFileSystemAccess) restoreFolder().then((h) => h && setFolder(h))
+  }, [])
+
+  // localStorage can be purged by the browser (notably iOS Safari) — if it
+  // came up empty, fall back to the IndexedDB mirror of the working project.
+  useEffect(() => {
+    if (!project) loadMirror().then((p) => p && setProject((prev) => prev ?? p))
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const flash = useCallback((msg: string) => {
@@ -116,6 +129,12 @@ export default function App() {
 
 function StartScreen({ onCreate, onOpen }: { onCreate: (name: string) => void; onOpen: (p: Project) => void }) {
   const [name, setName] = useState('')
+  const [backups, setBackups] = useState<BackupInfo[]>([])
+
+  useEffect(() => {
+    listBackups().then(setBackups)
+  }, [])
+
   return (
     <div className="start">
       <h1>🎼 Rehearsal Planner</h1>
@@ -132,6 +151,26 @@ function StartScreen({ onCreate, onOpen }: { onCreate: (name: string) => void; o
       <button className="link" onClick={() => uploadProject().then(onOpen).catch(() => {})}>
         …or open an existing project file
       </button>
+      {backups.length > 0 && (
+        <div className="recover">
+          <h3>Recover from backup</h3>
+          <ul className="file-list">
+            {backups.map((b) => (
+              <li key={b.key}>
+                <button
+                  className="link"
+                  onClick={() => loadBackup(b.key).then((p) => p && onOpen(p))}
+                >
+                  {b.name}
+                </button>{' '}
+                <span className="hint">
+                  {b.players} players, {b.pieces} pieces · {new Date(b.savedAt).toLocaleString()}
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
     </div>
   )
 }
@@ -149,6 +188,7 @@ function FileMenu({
   flash: (msg: string) => void
 }) {
   const [files, setFiles] = useState<string[] | null>(null)
+  const [backups, setBackups] = useState<BackupInfo[] | null>(null)
 
   const save = async () => {
     try {
@@ -188,11 +228,40 @@ function FileMenu({
     <>
       <button onClick={onNew}>New</button>
       <button onClick={open}>Open</button>
+      <button onClick={() => listBackups().then(setBackups)}>Backups</button>
       <button className="primary" onClick={save}>Save</button>
       {supportsFileSystemAccess && (
         <button onClick={connect} title="Connect a folder on your computer to save/load projects">
           {folder ? `📁 ${folder.name}` : '📁 Connect folder'}
         </button>
+      )}
+      {backups && (
+        <div className="modal-backdrop" onClick={() => setBackups(null)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Automatic backups</h3>
+            <p className="hint">
+              The app keeps a backup of each project in this browser. Loading one replaces the
+              current project (which has its own backup entry).
+            </p>
+            {backups.length === 0 && <p>No backups yet.</p>}
+            <ul className="file-list">
+              {backups.map((b) => (
+                <li key={b.key}>
+                  <button
+                    className="link"
+                    onClick={() => loadBackup(b.key).then((p) => { if (p) { onLoaded(p); setBackups(null) } })}
+                  >
+                    {b.name}
+                  </button>{' '}
+                  <span className="hint">
+                    {b.players} players, {b.pieces} pieces · {new Date(b.savedAt).toLocaleString()}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <button onClick={() => setBackups(null)}>Cancel</button>
+          </div>
+        </div>
       )}
       {files && (
         <div className="modal-backdrop" onClick={() => setFiles(null)}>

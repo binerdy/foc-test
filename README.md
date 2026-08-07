@@ -44,6 +44,13 @@ remembered across reloads. In other browsers, Save downloads the project file an
 uses a file picker. The current project is also autosaved to `localStorage` so a page
 reload never loses work.
 
+Because some browsers (notably iOS Safari) purge site storage under pressure or after
+about a week without a visit, every autosave is additionally mirrored to IndexedDB
+with one backup entry per project name. If the working copy disappears, the app
+restores it from the mirror automatically; the start screen and the "Backups" button
+list all backups for manual recovery. Browser storage is still not permanent —
+regularly saving the project file to disk remains the only guaranteed persistence.
+
 ## Development
 
 ```sh
