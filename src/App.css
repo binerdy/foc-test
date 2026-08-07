@@ -216,6 +216,29 @@ select {
 .set-actions { width: 30px; text-align: right; }
 .code-input { max-width: 130px; }
 
+/* number colour coding */
+.num-list { display: flex; flex-wrap: wrap; gap: 8px; margin: 10px 0; }
+.num-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 3px 6px 3px 12px;
+  border-radius: 999px;
+  border: 1px solid rgba(0, 0, 0, 0.12);
+  font-weight: 600;
+}
+.num-remove {
+  border: none;
+  background: none;
+  color: inherit;
+  padding: 0 4px;
+  font-size: 0.75rem;
+  cursor: pointer;
+  opacity: 0.7;
+}
+.num-remove:hover { opacity: 1; color: inherit; }
+.inline-palette { margin-top: 0; padding-top: 0; border-top: none; }
+
 /* piece colour coding */
 .dot {
   width: 18px;
@@ -325,6 +348,8 @@ select {
 }
 .combo-body { flex: 1; }
 .combo-open { color: var(--accent); white-space: nowrap; font-size: 0.9rem; }
+.session-title { margin-bottom: 4px; }
+.combo-row:disabled { cursor: default; opacity: 0.7; }
 .combo-pieces { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
 .combo-meta { font-size: 0.9rem; color: var(--muted); }
 .combo-meta strong { color: var(--text); }

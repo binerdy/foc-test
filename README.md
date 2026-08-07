@@ -29,6 +29,13 @@ as few players as possible sit around doing nothing.
   rejected with an inline error. Click a player to see and edit the same data from the
   player's perspective across all their pieces. Seating appears in the Excel export as
   e.g. `Anna (vl 1.2)`.
+- **Day plan** — the scheduler's main tool: distributes every selected piece over the
+  whole day (sessions × venues slots, e.g. 7 × 4 = 28 pieces) so that no session
+  contains two pieces sharing a player. Exact backtracking search with a node budget
+  and a balancing pass; when a full placement is impossible the unplaced pieces are
+  listed together with the reason (e.g. a player who plays in more pieces than the day
+  has sessions). Sessions are labelled morning/afternoon, reviewable like single
+  combinations, re-shuffleable, and downloadable as a whole-day Excel plan.
 - **Combination review & export** — click a combination to open its session plan:
   pieces laid out per venue (venue numbers freely swappable — they never affect the
   conflict constraints), every player's instrument/section/position editable inline
