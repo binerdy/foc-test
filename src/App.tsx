@@ -674,7 +674,7 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
   const [selectedCombo, setSelectedCombo] = useState<Combination | null>(null)
   const [dayPlan, setDayPlan] = useState<DayPlan | null>(null)
   const [daySeed, setDaySeed] = useState(1)
-  const [reviewSession, setReviewSession] = useState<number | null>(null)
+  const [reviewDay, setReviewDay] = useState(false)
   const [onlyMaximal, setOnlyMaximal] = useState(true)
   const [shown, setShown] = useState(100)
 
@@ -694,7 +694,7 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
     })
     setSelectedCombo(null)
     setDayPlan(null)
-    setReviewSession(null)
+    setReviewDay(false)
     setShown(100)
   }
 
@@ -706,7 +706,7 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
   const makePlan = (seed: number) => {
     setDaySeed(seed)
     setDayPlan(planDay(selectedPieces, project.players, project.settings.venues, sessionCount, seed))
-    setReviewSession(null)
+    setReviewDay(false)
   }
 
   const result = useMemo(() => {
@@ -719,16 +719,13 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
     [result, onlyMaximal],
   )
 
-  if (reviewSession !== null && dayPlan) {
-    const session = dayPlan.sessions[reviewSession]
+  if (reviewDay && dayPlan) {
     return (
-      <CombinationDetailView
+      <DayPlanDetailView
         project={project}
-        combination={{ ...session, maximal: true }}
+        plan={dayPlan}
         update={update}
-        onBack={() => setReviewSession(null)}
-        title={`Session ${reviewSession + 1} · ${reviewSession < project.settings.morningSessions ? 'morning' : 'afternoon'}`}
-        backLabel="← Back to day plan"
+        onBack={() => setReviewDay(false)}
       />
     )
   }
@@ -810,11 +807,7 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
             <ol className="combos">
               {dayPlan.sessions.map((session, i) => (
                 <li key={i} className="combo">
-                  <button
-                    className="combo-row"
-                    onClick={() => session.pieceIds.length > 0 && setReviewSession(i)}
-                    disabled={session.pieceIds.length === 0}
-                  >
+                  <div className="combo-row static">
                     <div className="combo-body">
                       <div className="session-title">
                         <strong>Session {i + 1}</strong>{' '}
@@ -842,14 +835,13 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
                         </>
                       )}
                     </div>
-                    {session.pieceIds.length > 0 && <span className="combo-open">Review →</span>}
-                  </button>
+                  </div>
                 </li>
               ))}
             </ol>
             <div className="detail-actions">
-              <button className="primary" onClick={() => exportDayPlan(project, dayPlan, project.settings.morningSessions)}>
-                Download day plan as Excel
+              <button className="primary" onClick={() => setReviewDay(true)}>
+                Review day plan →
               </button>
             </div>
           </>
@@ -923,6 +915,206 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
 // ------------------------------------------------------- combination detail
 
 /**
+ * Review page for the whole day plan: every session with its venues and
+ * editable seats, idle players with activity texts per session, and the
+ * day-plan Excel download once everything looks right.
+ */
+function DayPlanDetailView({ project, plan, update, onBack }: {
+  project: Project
+  plan: DayPlan
+  update: (fn: (p: Project) => Project) => void
+  onBack: () => void
+}) {
+  const [venueBySession, setVenueBySession] = useState<Record<number, Record<string, number>>>(() =>
+    Object.fromEntries(
+      plan.sessions.map((s, i) => [i, Object.fromEntries(s.pieceIds.map((id, j) => [id, j + 1]))]),
+    ),
+  )
+  const [activities, setActivities] = useState<Record<number, Record<string, string>>>({})
+
+  const playerName = useMemo(() => new Map(project.players.map((p) => [p.id, p.name])), [project.players])
+  const morning = project.settings.morningSessions
+
+  const moveToVenue = (sessionIdx: number) => (pieceId: string, venue: number) =>
+    setVenueBySession((all) => {
+      const v = all[sessionIdx] ?? {}
+      const occupant = Object.keys(v).find((id) => v[id] === venue)
+      const next = { ...v, [pieceId]: venue }
+      if (occupant && occupant !== pieceId) next[occupant] = v[pieceId]
+      return { ...all, [sessionIdx]: next }
+    })
+
+  const setActivity = (sessionIdx: number, playerId: string, text: string) =>
+    setActivities((all) => ({ ...all, [sessionIdx]: { ...all[sessionIdx], [playerId]: text } }))
+
+  const missingSeats = countMissingSeats(project, [...new Set(plan.sessions.flatMap((s) => s.pieceIds))])
+  const busyTotal = plan.sessions.reduce((acc, s) => acc + s.playerIds.length, 0)
+
+  return (
+    <section>
+      <div className="detail-head">
+        <button className="link" onClick={onBack}>← Back to scheduler</button>
+        <h2>Day plan</h2>
+        <p className="hint">
+          {plan.sessions.length} sessions × {project.settings.venues} venues ·{' '}
+          {project.settings.sessionMinutes} min per session · on average{' '}
+          {(busyTotal / plan.sessions.length).toFixed(1)} of {project.players.length} players busy per session.
+          Venue numbers can be swapped freely within a session — they don&apos;t affect the conflict constraints.
+        </p>
+        {!plan.complete && (
+          <p className="warn">
+            Unplaced pieces: {plan.unplacedPieceIds.map((id) => project.pieces.find((pc) => pc.id === id)?.name ?? '?').join(', ')}
+          </p>
+        )}
+        {missingSeats > 0 && (
+          <p className="warn">
+            {missingSeats} seat{missingSeats === 1 ? ' is' : 's are'} missing an instrument or position —
+            highlighted below, fix them right here.
+          </p>
+        )}
+      </div>
+
+      {plan.sessions.map((session, i) => (
+        <div key={i} className="day-session">
+          <h3 className="day-session-title">
+            Session {i + 1} <small className="hint">{i < morning ? 'morning' : 'afternoon'}</small>
+            {session.pieceIds.length === 0 && <small className="hint"> · free</small>}
+          </h3>
+          {session.pieceIds.length > 0 && (
+            <>
+              <SessionVenues
+                project={project}
+                pieceIds={session.pieceIds}
+                venueOf={venueBySession[i] ?? {}}
+                onMove={moveToVenue(i)}
+                update={update}
+                hideEmpty
+              />
+              <div className="panel">
+                <div className="panel-head"><h3>Idle players</h3></div>
+                {session.idlePlayerIds.length === 0 ? (
+                  <p className="hint">Everyone plays in this session 🎉</p>
+                ) : (
+                  <table className="seat-table">
+                    <thead>
+                      <tr><th>Player</th><th>Activity</th></tr>
+                    </thead>
+                    <tbody>
+                      {session.idlePlayerIds.map((id) => (
+                        <tr key={id}>
+                          <th>{playerName.get(id) ?? '?'}</th>
+                          <td>
+                            <input
+                              className="activity-input"
+                              placeholder="e.g. self study, coaching…"
+                              value={activities[i]?.[id] ?? ''}
+                              onChange={(e) => setActivity(i, id, e.target.value)}
+                            />
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </div>
+            </>
+          )}
+        </div>
+      ))}
+
+      <div className="detail-actions">
+        <button
+          className="primary"
+          onClick={() => exportDayPlan(project, plan, morning, { venueBySession, activities })}
+        >
+          Download day plan as Excel
+        </button>
+      </div>
+    </section>
+  )
+}
+
+/** How many players in these pieces are missing an instrument or a position. */
+function countMissingSeats(project: Project, pieceIds: string[]): number {
+  return pieceIds.reduce((acc, pieceId) => {
+    const piece = project.pieces.find((pc) => pc.id === pieceId)
+    if (!piece) return acc
+    return acc + piece.playerIds.filter((id) => {
+      const seat = piece.seats?.[id]
+      return !seat?.instrumentId || seat?.position === undefined
+    }).length
+  }, 0)
+}
+
+/** The venue panels of one session: pieces with editable seats, movable between venues. */
+function SessionVenues({ project, pieceIds, venueOf, onMove, update, hideEmpty = false }: {
+  project: Project
+  pieceIds: string[]
+  venueOf: Record<string, number>
+  onMove: (pieceId: string, venue: number) => void
+  update: (fn: (p: Project) => Project) => void
+  hideEmpty?: boolean
+}) {
+  const venues = project.settings.venues
+  return (
+    <div className="venues">
+      {Array.from({ length: venues }, (_, i) => i + 1).map((venue) => {
+        const pieceId = pieceIds.find((id) => venueOf[id] === venue)
+        const piece = pieceId ? project.pieces.find((pc) => pc.id === pieceId) : undefined
+        if (!piece && hideEmpty) return null
+        return (
+          <div key={venue} className="panel venue-panel">
+            <div className="panel-head">
+              <h3>Venue {venue}</h3>
+              {piece && (
+                <>
+                  <span className="chip big" style={pieceChipStyle(piece)}>{piece.name}</span>
+                  <span className="spacer" />
+                  <label className="venue-move">
+                    Move to
+                    <select value={venue} onChange={(e) => onMove(piece.id, parseInt(e.target.value, 10))}>
+                      {Array.from({ length: venues }, (_, i) => i + 1).map((v) => (
+                        <option key={v} value={v}>Venue {v}</option>
+                      ))}
+                    </select>
+                  </label>
+                </>
+              )}
+            </div>
+            {!piece ? (
+              <p className="hint">No piece in this venue.</p>
+            ) : piece.playerIds.length === 0 ? (
+              <p className="hint">No players assigned to this piece.</p>
+            ) : (
+              <table className="seat-table">
+                <thead>
+                  <tr><th>Player</th><th>Instrument</th><th>Section</th><th>Position</th></tr>
+                </thead>
+                <tbody>
+                  {project.players.filter((pl) => piece.playerIds.includes(pl.id)).map((pl) => {
+                    const seat = piece.seats?.[pl.id]
+                    const missing = !seat?.instrumentId || seat?.position === undefined
+                    return (
+                      <tr key={pl.id} className={missing ? 'missing-seat' : ''}>
+                        <th>
+                          {pl.name}
+                          {missing && <span className="missing-mark" title="Instrument or position missing"> ⚠</span>}
+                        </th>
+                        <SeatEditor project={project} piece={piece} playerId={pl.id} update={update} />
+                      </tr>
+                    )
+                  })}
+                </tbody>
+              </table>
+            )}
+          </div>
+        )
+      })}
+    </div>
+  )
+}
+
+/**
  * Review page for one combination: pieces spread over venues (venue numbers
  * are swappable — they never affect the conflict constraints), every playing
  * player's seat with missing instrument/position highlighted and editable,
@@ -936,7 +1128,6 @@ function CombinationDetailView({ project, combination, update, onBack, title = '
   title?: string
   backLabel?: string
 }) {
-  const venues = project.settings.venues
   const [venueOf, setVenueOf] = useState<Record<string, number>>(() =>
     Object.fromEntries(combination.pieceIds.map((id, i) => [id, i + 1])),
   )
@@ -956,14 +1147,7 @@ function CombinationDetailView({ project, combination, update, onBack, title = '
   const download = () =>
     exportCombinationPlan(project, { combination, venueOf, activities })
 
-  const missingSeats = combination.pieceIds.reduce((acc, pieceId) => {
-    const piece = project.pieces.find((pc) => pc.id === pieceId)
-    if (!piece) return acc
-    return acc + piece.playerIds.filter((id) => {
-      const seat = piece.seats?.[id]
-      return !seat?.instrumentId || seat?.position === undefined
-    }).length
-  }, 0)
+  const missingSeats = countMissingSeats(project, combination.pieceIds)
 
   return (
     <section>
@@ -983,59 +1167,7 @@ function CombinationDetailView({ project, combination, update, onBack, title = '
         )}
       </div>
 
-      <div className="venues">
-        {Array.from({ length: venues }, (_, i) => i + 1).map((venue) => {
-          const pieceId = combination.pieceIds.find((id) => venueOf[id] === venue)
-          const piece = pieceId ? project.pieces.find((pc) => pc.id === pieceId) : undefined
-          return (
-            <div key={venue} className="panel venue-panel">
-              <div className="panel-head">
-                <h3>Venue {venue}</h3>
-                {piece && (
-                  <>
-                    <span className="chip big" style={pieceChipStyle(piece)}>{piece.name}</span>
-                    <span className="spacer" />
-                    <label className="venue-move">
-                      Move to
-                      <select value={venue} onChange={(e) => moveToVenue(piece.id, parseInt(e.target.value, 10))}>
-                        {Array.from({ length: venues }, (_, i) => i + 1).map((v) => (
-                          <option key={v} value={v}>Venue {v}</option>
-                        ))}
-                      </select>
-                    </label>
-                  </>
-                )}
-              </div>
-              {!piece ? (
-                <p className="hint">No piece in this venue.</p>
-              ) : piece.playerIds.length === 0 ? (
-                <p className="hint">No players assigned to this piece.</p>
-              ) : (
-                <table className="seat-table">
-                  <thead>
-                    <tr><th>Player</th><th>Instrument</th><th>Section</th><th>Position</th></tr>
-                  </thead>
-                  <tbody>
-                    {project.players.filter((pl) => piece.playerIds.includes(pl.id)).map((pl) => {
-                      const seat = piece.seats?.[pl.id]
-                      const missing = !seat?.instrumentId || seat?.position === undefined
-                      return (
-                        <tr key={pl.id} className={missing ? 'missing-seat' : ''}>
-                          <th>
-                            {pl.name}
-                            {missing && <span className="missing-mark" title="Instrument or position missing"> ⚠</span>}
-                          </th>
-                          <SeatEditor project={project} piece={piece} playerId={pl.id} update={update} />
-                        </tr>
-                      )
-                    })}
-                  </tbody>
-                </table>
-              )}
-            </div>
-          )
-        })}
-      </div>
+      <SessionVenues project={project} pieceIds={combination.pieceIds} venueOf={venueOf} onMove={moveToVenue} update={update} />
 
       <div className="panel">
         <div className="panel-head">
