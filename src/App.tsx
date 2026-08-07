@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useState, type ClipboardEvent } from 'react'
 import { createProject, newId, type Project } from './types'
 import { findCombinations } from './combinations'
 import { exportCombinations } from './excel'
@@ -207,18 +207,99 @@ function FileMenu({
   )
 }
 
+// ------------------------------------------------------------------ name adder
+
+/**
+ * Split clipboard text into names. A column copied from Excel/Google Sheets
+ * arrives newline-separated, a row tab-separated; cells are unquoted if needed.
+ */
+function parsePastedNames(text: string): string[] {
+  const seen = new Set<string>()
+  const names: string[] = []
+  for (const part of text.split(/[\t\r\n]+/)) {
+    const name = part.trim().replace(/^"(.*)"$/s, '$1').trim()
+    if (!name) continue
+    const key = name.toLowerCase()
+    if (seen.has(key)) continue
+    seen.add(key)
+    names.push(name)
+  }
+  return names
+}
+
+function NameAdder({
+  placeholder, addLabel, existing, onAdd,
+}: {
+  placeholder: string
+  addLabel: string
+  existing: string[]
+  onAdd: (names: string[]) => void
+}) {
+  const [name, setName] = useState('')
+  const [msg, setMsg] = useState('')
+
+  const flash = (m: string) => {
+    setMsg(m)
+    window.setTimeout(() => setMsg((s) => (s === m ? '' : s)), 4000)
+  }
+
+  const addNames = (names: string[]) => {
+    const existingSet = new Set(existing.map((n) => n.trim().toLowerCase()))
+    const fresh = names.filter((n) => !existingSet.has(n.toLowerCase()))
+    if (fresh.length > 0) onAdd(fresh)
+    const skipped = names.length - fresh.length
+    if (names.length > 1 || skipped > 0) {
+      flash(`Added ${fresh.length}${skipped > 0 ? `, skipped ${skipped} duplicate${skipped === 1 ? '' : 's'}` : ''}`)
+    }
+  }
+
+  const handlePaste = (e: ClipboardEvent<HTMLInputElement>) => {
+    const names = parsePastedNames(e.clipboardData.getData('text'))
+    if (names.length > 1) {
+      e.preventDefault()
+      addNames(names)
+      setName('')
+    }
+  }
+
+  const pasteList = async () => {
+    try {
+      const names = parsePastedNames(await navigator.clipboard.readText())
+      if (names.length === 0) flash('No names found in the clipboard')
+      else addNames(names)
+    } catch {
+      flash('Clipboard access blocked — click the field and press Ctrl/Cmd+V instead')
+    }
+  }
+
+  return (
+    <form
+      className="add-row"
+      onSubmit={(e) => {
+        e.preventDefault()
+        const trimmed = name.trim()
+        if (!trimmed) return
+        addNames([trimmed])
+        setName('')
+      }}
+    >
+      <input placeholder={placeholder} value={name} onChange={(e) => setName(e.target.value)} onPaste={handlePaste} />
+      <button type="submit" disabled={!name.trim()}>{addLabel}</button>
+      <button type="button" onClick={pasteList} title="Add many at once: copy a column or row of names in Excel/Google Sheets, then click here">
+        📋 Paste list
+      </button>
+      {msg && <span className="hint">{msg}</span>}
+    </form>
+  )
+}
+
 // --------------------------------------------------------------------- players
 
 function PlayersView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
-  const [name, setName] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
 
-  const add = () => {
-    const trimmed = name.trim()
-    if (!trimmed) return
-    update((p) => ({ ...p, players: [...p.players, { id: newId(), name: trimmed }] }))
-    setName('')
-  }
+  const add = (names: string[]) =>
+    update((p) => ({ ...p, players: [...p.players, ...names.map((n) => ({ id: newId(), name: n }))] }))
 
   const remove = (id: string) =>
     update((p) => ({
@@ -244,11 +325,15 @@ function PlayersView({ project, update }: { project: Project; update: (fn: (p: P
 
   return (
     <section>
-      <form className="add-row" onSubmit={(e) => { e.preventDefault(); add() }}>
-        <input placeholder="Add player (first name)…" value={name} onChange={(e) => setName(e.target.value)} />
-        <button type="submit" disabled={!name.trim()}>Add player</button>
-      </form>
-      {project.players.length === 0 && <p className="hint">No players yet. Add the first one above.</p>}
+      <NameAdder
+        placeholder="Add player (first name)…"
+        addLabel="Add player"
+        existing={project.players.map((pl) => pl.name)}
+        onAdd={add}
+      />
+      {project.players.length === 0 && (
+        <p className="hint">No players yet. Add one above — or copy a column of names from Excel/Google Sheets and paste it into the field.</p>
+      )}
       <ul className="cards">
         {project.players.map((pl) => {
           const pieces = project.pieces.filter((pc) => pc.playerIds.includes(pl.id))
@@ -293,15 +378,10 @@ function PlayersView({ project, update }: { project: Project; update: (fn: (p: P
 // ---------------------------------------------------------------------- pieces
 
 function PiecesView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
-  const [name, setName] = useState('')
   const [openId, setOpenId] = useState<string | null>(null)
 
-  const add = () => {
-    const trimmed = name.trim()
-    if (!trimmed) return
-    update((p) => ({ ...p, pieces: [...p.pieces, { id: newId(), name: trimmed, playerIds: [] }] }))
-    setName('')
-  }
+  const add = (names: string[]) =>
+    update((p) => ({ ...p, pieces: [...p.pieces, ...names.map((n) => ({ id: newId(), name: n, playerIds: [] }))] }))
 
   const remove = (id: string) => update((p) => ({ ...p, pieces: p.pieces.filter((pc) => pc.id !== id) }))
 
@@ -322,11 +402,15 @@ function PiecesView({ project, update }: { project: Project; update: (fn: (p: Pr
 
   return (
     <section>
-      <form className="add-row" onSubmit={(e) => { e.preventDefault(); add() }}>
-        <input placeholder="Add piece…" value={name} onChange={(e) => setName(e.target.value)} />
-        <button type="submit" disabled={!name.trim()}>Add piece</button>
-      </form>
-      {project.pieces.length === 0 && <p className="hint">No pieces yet. Add the first one above.</p>}
+      <NameAdder
+        placeholder="Add piece…"
+        addLabel="Add piece"
+        existing={project.pieces.map((pc) => pc.name)}
+        onAdd={add}
+      />
+      {project.pieces.length === 0 && (
+        <p className="hint">No pieces yet. Add one above — or copy a column of names from Excel/Google Sheets and paste it into the field.</p>
+      )}
       <ul className="cards">
         {project.pieces.map((pc) => {
           const open = openId === pc.id
