@@ -6,13 +6,14 @@ import { exportCombinations } from './excel'
 import {
   autosave,
   connectFolder,
-  downloadProject,
+  isTouchWebKit,
   listProjectFiles,
   loadAutosave,
   loadMirror,
   loadProjectFromFolder,
   requestPersistentStorage,
   restoreFolder,
+  saveProjectFallback,
   saveProjectToFolder,
   supportsFileSystemAccess,
   uploadProject,
@@ -180,6 +181,7 @@ function FileMenu({
   flash: (msg: string) => void
 }) {
   const [files, setFiles] = useState<string[] | null>(null)
+  const [folderHelp, setFolderHelp] = useState(false)
 
   const confirmDiscard = () =>
     !dirty || window.confirm('You have unsaved changes — discard them?')
@@ -189,10 +191,15 @@ function FileMenu({
       if (folder) {
         const name = await saveProjectToFolder(folder, project)
         flash(`Saved ${name} to “${folder.name}”`)
-      } else {
-        downloadProject(project)
-        flash('Project downloaded')
+        onSaved()
+        return
       }
+      const outcome = await saveProjectFallback(project)
+      if (outcome === 'cancelled') {
+        flash('Save cancelled')
+        return
+      }
+      flash(outcome === 'shared' ? 'Project file shared — “Save to Files” stores it in a folder' : 'Project downloaded')
       onSaved()
     } catch (e) {
       flash(`Save failed: ${(e as Error).message}`)
@@ -227,10 +234,41 @@ function FileMenu({
       <button className="primary" onClick={save} title={dirty ? 'You have unsaved changes' : 'All changes saved to file'}>
         Save{dirty && <span className="unsaved-dot" aria-label="unsaved changes"> ●</span>}
       </button>
-      {supportsFileSystemAccess && (
+      {supportsFileSystemAccess ? (
         <button onClick={connect} title="Connect a folder on your computer to save/load projects">
           {folder ? `📁 ${folder.name}` : '📁 Connect folder'}
         </button>
+      ) : (
+        <button onClick={() => setFolderHelp(true)} title="How saving works in this browser">
+          📁 Files?
+        </button>
+      )}
+      {folderHelp && (
+        <div className="modal-backdrop" onClick={() => setFolderHelp(false)}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h3>Saving in this browser</h3>
+            <p>
+              Connecting a folder needs the File System Access API, which this browser doesn&apos;t
+              provide — on iPhone and iPad no browser does, so a permanent folder connection isn&apos;t
+              possible there.
+            </p>
+            {isTouchWebKit ? (
+              <p>
+                Instead, <strong>Save</strong> opens the share sheet with the project file: choose{' '}
+                <strong>Save to Files</strong> and pick any folder in iCloud Drive or On My
+                iPhone/iPad. <strong>Open</strong> loads the file back from the Files app. Saving to
+                iCloud Drive also makes the project available on your computer.
+              </p>
+            ) : (
+              <p>
+                Instead, <strong>Save</strong> downloads the project file and <strong>Open</strong>{' '}
+                loads it via a file picker. For the folder connection, use a Chromium browser such as
+                Chrome or Edge on desktop.
+              </p>
+            )}
+            <button onClick={() => setFolderHelp(false)}>Got it</button>
+          </div>
+        </div>
       )}
       {files && (
         <div className="modal-backdrop" onClick={() => setFiles(null)}>

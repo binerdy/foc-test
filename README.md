@@ -40,9 +40,12 @@ as few players as possible sit around doing nothing.
 
 No backend. In Chrome/Edge you can **connect a folder on your computer** (File System
 Access API, like vscode.dev) and save/load project JSON files there; the folder is
-remembered across reloads. In other browsers, Save downloads the project file and Open
-uses a file picker. The current project is also autosaved to `localStorage` so a page
-reload never loses work.
+remembered across reloads. On iPhone/iPad — where no browser offers that API — Save
+opens the **share sheet** with the project file so "Save to Files" can place it in any
+folder in iCloud Drive or On My iPhone, and Open loads it back from the Files app; a
+"Files?" button explains this in-app. Other browsers download the file on Save and use
+a file picker on Open. The current project is also autosaved to `localStorage` so a
+page reload never loses work.
 
 Because some browsers (notably iOS Safari) purge site storage under pressure or after
 about a week without a visit, every autosave is additionally mirrored to IndexedDB,
