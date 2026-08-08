@@ -115,6 +115,14 @@ h1, h2, h3 { letter-spacing: -0.01em; }
 
 .content { flex: 1; padding: 16px; max-width: 1100px; width: 100%; margin: 0 auto; }
 
+.footer {
+  text-align: center;
+  padding: 10px 16px 14px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
 /* ---------- generic controls ---------- */
 button {
   font: inherit;
@@ -417,20 +425,29 @@ select {
 }
 
 /* day plan suggestions + free-capacity recommendation */
-.suggestions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
-.suggestion { padding: 6px 12px; }
-.suggestion small { color: var(--muted); }
-.suggestion.active { border-color: var(--accent); color: var(--accent); background: var(--accent-soft); }
-.suggestion.active small { color: var(--accent); }
+.plan-list { display: flex; flex-direction: column; gap: 14px; }
+.plan-option {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 10px 14px;
+  background: var(--bg);
+}
+.plan-option-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
+.plan-session-line { display: flex; align-items: center; gap: 10px; padding: 3px 0; flex-wrap: wrap; }
+.plan-session-label { min-width: 58px; font-weight: 600; white-space: nowrap; }
+.plan-idle { white-space: nowrap; }
 .additions {
   background: #effaf3;
   border: 1px solid #bfe3cc;
   border-radius: 8px;
-  padding: 10px 12px;
-  margin-bottom: 12px;
+  padding: 8px 12px;
+  margin-top: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px 14px;
+  flex-wrap: wrap;
 }
-.additions-title { margin: 0 0 8px; font-size: 0.92rem; }
-.additions-list { display: flex; align-items: center; gap: 4px 14px; flex-wrap: wrap; }
+.additions-title { font-size: 0.92rem; font-weight: 600; }
 .additions .check:hover { background: rgba(255, 255, 255, 0.6); }
 .combo-row.static { cursor: default; }
 .day-session { margin-bottom: 22px; }
