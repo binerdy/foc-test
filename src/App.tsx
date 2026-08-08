@@ -179,7 +179,19 @@ export default function App() {
           </>
         )}
       </main>
+      <BuildStamp />
     </div>
+  )
+}
+
+/** Which deployment is this page running? Settles "am I seeing an old version?". */
+function BuildStamp() {
+  return (
+    <footer className="footer">
+      build {__BUILD_INFO__.commit}
+      {__BUILD_INFO__.context !== 'production' && __BUILD_INFO__.context !== 'local' ? ` (${__BUILD_INFO__.context})` : ''}
+      {' · '}{__BUILD_INFO__.builtAt}
+    </footer>
   )
 }
 
@@ -203,6 +215,7 @@ function StartScreen({ onCreate, onOpen }: { onCreate: (name: string) => void; o
       <button className="link" onClick={() => uploadProject().then(onOpen).catch(() => {})}>
         …or open an existing project file
       </button>
+      <BuildStamp />
     </div>
   )
 }

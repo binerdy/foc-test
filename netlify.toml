@@ -6,3 +6,14 @@
   from = "/*"
   to = "/index.html"
   status = 200
+
+# Never let browsers hold a stale index.html — hashed assets stay cacheable.
+[[headers]]
+  for = "/"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"
+
+[[headers]]
+  for = "/index.html"
+  [headers.values]
+    Cache-Control = "public, max-age=0, must-revalidate"

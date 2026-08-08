@@ -115,6 +115,14 @@ h1, h2, h3 { letter-spacing: -0.01em; }
 
 .content { flex: 1; padding: 16px; max-width: 1100px; width: 100%; margin: 0 auto; }
 
+.footer {
+  text-align: center;
+  padding: 10px 16px 14px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  font-family: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
 /* ---------- generic controls ---------- */
 button {
   font: inherit;
