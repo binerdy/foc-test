@@ -13,6 +13,179 @@ export interface DayPlan {
   complete: boolean
 }
 
+/** Sessions actually holding pieces. */
+export function usedSessionCount(plan: DayPlan): number {
+  return plan.sessions.filter((s) => s.pieceIds.length > 0).length
+}
+
+/** Total gap idleness of an ordered list of (used) sessions: idle sessions
+ *  sandwiched between a player's first and last busy session — the annoying
+ *  kind of waiting, as opposed to free time at the edge of the day. */
+function gapsForOrder(sessions: SessionPlan[]): number {
+  const first = new Map<string, number>()
+  const last = new Map<string, number>()
+  const count = new Map<string, number>()
+  sessions.forEach((s, i) => {
+    for (const id of s.playerIds) {
+      if (!first.has(id)) first.set(id, i)
+      last.set(id, i)
+      count.set(id, (count.get(id) ?? 0) + 1)
+    }
+  })
+  let gaps = 0
+  for (const [id, f] of first) gaps += (last.get(id)! - f + 1) - (count.get(id) ?? 0)
+  return gaps
+}
+
+/** Gap idleness of a plan (empty sessions at the end of the day don't count). */
+export function gapIdleness(plan: DayPlan): number {
+  return gapsForOrder(plan.sessions.filter((s) => s.pieceIds.length > 0))
+}
+
+/** Reorder used sessions to minimise gap idleness (exhaustive for ≤ 7 used
+ *  sessions — session slots are interchangeable, only the order changes). */
+function minimiseGaps(sessionPlans: SessionPlan[]): SessionPlan[] {
+  const used = sessionPlans.filter((s) => s.pieceIds.length > 0)
+  const empty = sessionPlans.filter((s) => s.pieceIds.length === 0)
+  if (used.length < 3 || used.length > 7) return sessionPlans
+  let best = used
+  let bestGaps = gapsForOrder(used)
+  // Heap's algorithm over a working copy
+  const arr = [...used]
+  const k = arr.length
+  const c = new Array<number>(k).fill(0)
+  let i = 0
+  while (i < k && bestGaps > 0) {
+    if (c[i] < i) {
+      const swap = i % 2 === 0 ? 0 : c[i]
+      ;[arr[swap], arr[i]] = [arr[i], arr[swap]]
+      const g = gapsForOrder(arr)
+      if (g < bestGaps) {
+        bestGaps = g
+        best = [...arr]
+      }
+      c[i]++
+      i = 0
+    } else {
+      c[i] = 0
+      i++
+    }
+  }
+  return [...best, ...empty]
+}
+
+/** Order-insensitive identity of a plan, for deduplicating suggestions. */
+export function planSignature(plan: DayPlan): string {
+  const groups = plan.sessions
+    .filter((s) => s.pieceIds.length > 0)
+    .map((s) => [...s.pieceIds].sort().join('+'))
+    .sort()
+    .join('|')
+  return `${groups}#${[...plan.unplacedPieceIds].sort().join(',')}`
+}
+
+/**
+ * Generate several distinct day-plan suggestions: run the solver with a range
+ * of seeds, deduplicate equivalent plans and keep the best few (fewest
+ * unplaced pieces, then fewest sessions used).
+ */
+export function planDayVariants(
+  selectedPieces: Piece[],
+  allPlayers: Player[],
+  venues: number,
+  sessionCount: number,
+  seedBase: number,
+  tries = 8,
+  keep = 4,
+): DayPlan[] {
+  const seen = new Set<string>()
+  const variants: DayPlan[] = []
+  for (let i = 0; i < tries; i++) {
+    const plan = planDay(selectedPieces, allPlayers, venues, sessionCount, seedBase + i)
+    const sig = planSignature(plan)
+    if (seen.has(sig)) continue
+    seen.add(sig)
+    variants.push(plan)
+  }
+  variants.sort(
+    (a, b) =>
+      a.unplacedPieceIds.length - b.unplacedPieceIds.length ||
+      usedSessionCount(a) - usedSessionCount(b) ||
+      gapIdleness(a) - gapIdleness(b),
+  )
+  return variants.slice(0, keep)
+}
+
+export interface PieceSuggestion {
+  pieceId: string
+  /** Session (index into plan.sessions) where the piece would fit. */
+  sessionIndex: number
+}
+
+/**
+ * Free-capacity recommendation: pieces NOT in the current selection that would
+ * still fit into the plan — a session with a free venue and no player overlap.
+ * Capacity is reserved greedily so the returned suggestions are jointly
+ * applicable (and any subset of them too).
+ */
+export function suggestAdditions(
+  plan: DayPlan,
+  allPieces: Piece[],
+  selectedIds: Set<string>,
+  venues: number,
+): PieceSuggestion[] {
+  const sessions = plan.sessions.map((s) => ({
+    count: s.pieceIds.length,
+    players: new Set(s.playerIds),
+  }))
+  const suggestions: PieceSuggestion[] = []
+  for (const piece of allPieces) {
+    if (selectedIds.has(piece.id)) continue
+    let best = -1
+    for (let s = 0; s < sessions.length; s++) {
+      if (sessions[s].count >= venues) continue
+      if (piece.playerIds.some((id) => sessions[s].players.has(id))) continue
+      // pack: prefer the fullest session that still has room, but avoid
+      // opening a brand-new session for a mere suggestion
+      if (sessions[s].count === 0) continue
+      if (best === -1 || sessions[s].count > sessions[best].count) best = s
+    }
+    if (best === -1) continue
+    suggestions.push({ pieceId: piece.id, sessionIndex: best })
+    sessions[best].count++
+    for (const id of piece.playerIds) sessions[best].players.add(id)
+  }
+  return suggestions
+}
+
+/** Insert suggested pieces into their sessions and recompute busy/idle players. */
+export function applyAdditions(
+  plan: DayPlan,
+  additions: PieceSuggestion[],
+  allPieces: Piece[],
+  allPlayers: Player[],
+): DayPlan {
+  const pieceById = new Map(allPieces.map((p) => [p.id, p]))
+  const sessions = plan.sessions.map((s) => ({ ...s, pieceIds: [...s.pieceIds] }))
+  for (const a of additions) {
+    sessions[a.sessionIndex]?.pieceIds.push(a.pieceId)
+  }
+  return {
+    ...plan,
+    sessions: sessions.map((s) => {
+      const used = new Set<string>()
+      for (const pieceId of s.pieceIds) {
+        for (const id of pieceById.get(pieceId)?.playerIds ?? []) used.add(id)
+      }
+      return {
+        pieceIds: s.pieceIds,
+        playerIds: [...used],
+        idlePlayerIds: allPlayers.filter((p) => !used.has(p.id)).map((p) => p.id),
+      }
+    }),
+  }
+}
+
 /** Players appearing in more pieces than the day has sessions — those pieces
  *  can never all be placed, however the plan is arranged. */
 export function overbookedPlayers(
@@ -188,7 +361,7 @@ export function planDay(
   })
 
   return {
-    sessions: sessionPlans,
+    sessions: minimiseGaps(sessionPlans),
     unplacedPieceIds: unplaced.map((idx) => selectedPieces[idx].id),
     complete: unplaced.length === 0,
   }

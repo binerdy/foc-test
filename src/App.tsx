@@ -2,7 +2,16 @@ import { useCallback, useEffect, useMemo, useState, type ClipboardEvent, type CS
 import { createProject, INSTRUMENTS_SET_ID, newId, type Piece, type Project, type Seat } from './types'
 import { inkFor, PASTEL_PALETTE } from './colors'
 import { exportDayPlan } from './excel'
-import { overbookedPlayers, planDay, type DayPlan } from './dayplan'
+import {
+  applyAdditions,
+  gapIdleness,
+  overbookedPlayers,
+  planDayVariants,
+  planSignature,
+  suggestAdditions,
+  usedSessionCount,
+  type DayPlan,
+} from './dayplan'
 import {
   autosave,
   connectFolder,
@@ -696,12 +705,15 @@ function MatrixView({ project, update }: { project: Project; update: (fn: (p: Pr
 
 function SchedulerView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
   const [selectedPieceIds, setSelectedPieceIds] = useState<Set<string>>(new Set())
-  const [dayPlan, setDayPlan] = useState<DayPlan | null>(null)
-  const [daySeed, setDaySeed] = useState(1)
+  const [plans, setPlans] = useState<DayPlan[] | null>(null)
+  const [activeIdx, setActiveIdx] = useState(0)
+  const [seedBase, setSeedBase] = useState(1)
   const [reviewDay, setReviewDay] = useState(false)
+  const [checkedAdds, setCheckedAdds] = useState<Set<string>>(new Set())
 
   const sessionCount = project.settings.morningSessions + project.settings.afternoonSessions
   const capacity = sessionCount * project.settings.venues
+  const dayPlan = plans?.[activeIdx] ?? null
 
   const playerName = useMemo(() => new Map(project.players.map((p) => [p.id, p.name])), [project.players])
   const pieceName = useMemo(() => new Map(project.pieces.map((p) => [p.id, p.name])), [project.pieces])
@@ -714,7 +726,7 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
       else next.add(id)
       return next
     })
-    setDayPlan(null)
+    setPlans(null)
     setReviewDay(false)
   }
 
@@ -723,10 +735,42 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
     [project.pieces, selectedPieceIds],
   )
 
-  const makePlan = (seed: number) => {
-    setDaySeed(seed)
-    setDayPlan(planDay(selectedPieces, project.players, project.settings.venues, sessionCount, seed))
+  const makePlans = (base: number) => {
+    setSeedBase(base)
+    setPlans(planDayVariants(selectedPieces, project.players, project.settings.venues, sessionCount, base))
+    setActiveIdx(0)
     setReviewDay(false)
+  }
+
+  // Free-capacity recommendation: unselected pieces that still fit into the
+  // active plan's sessions without conflicts.
+  const additions = useMemo(
+    () => (dayPlan ? suggestAdditions(dayPlan, project.pieces, selectedPieceIds, project.settings.venues) : []),
+    [dayPlan, project.pieces, selectedPieceIds, project.settings.venues],
+  )
+
+  useEffect(() => {
+    setCheckedAdds(new Set(additions.map((a) => a.pieceId)))
+  }, [additions])
+
+  const applyAdditionsChecked = () => {
+    if (!dayPlan) return
+    const chosen = additions.filter((a) => checkedAdds.has(a.pieceId))
+    if (chosen.length === 0) return
+    const newPlan = applyAdditions(dayPlan, chosen, project.pieces, project.players)
+    const newSelection = new Set([...selectedPieceIds, ...chosen.map((a) => a.pieceId)])
+    setSelectedPieceIds(newSelection)
+    // keep the extended plan as the active suggestion, fresh alternatives behind it
+    const alternatives = planDayVariants(
+      project.pieces.filter((pc) => newSelection.has(pc.id)),
+      project.players,
+      project.settings.venues,
+      sessionCount,
+      seedBase + 101,
+    )
+    const sig = planSignature(newPlan)
+    setPlans([newPlan, ...alternatives.filter((p) => planSignature(p) !== sig)].slice(0, 4))
+    setActiveIdx(0)
   }
 
   if (reviewDay && dayPlan) {
@@ -771,10 +815,10 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
             <small>({sessionCount} sessions × {project.settings.venues} venues = room for {capacity} pieces)</small>
           </h3>
           <span className="spacer" />
-          {dayPlan && (
-            <button onClick={() => makePlan(daySeed + 1)}>Try another arrangement</button>
+          {plans && (
+            <button onClick={() => makePlans(seedBase + 8)}>More suggestions</button>
           )}
-          <button className="primary" onClick={() => makePlan(daySeed)} disabled={selectedPieceIds.size === 0}>
+          <button className="primary" onClick={() => makePlans(seedBase)} disabled={selectedPieceIds.size === 0}>
             Plan the day
           </button>
         </div>
@@ -792,6 +836,57 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
           </p>
         ) : (
           <>
+            {plans && plans.length > 1 && (
+              <div className="suggestions">
+                {plans.map((p, i) => (
+                  <button
+                    key={i}
+                    className={i === activeIdx ? 'suggestion active' : 'suggestion'}
+                    onClick={() => setActiveIdx(i)}
+                  >
+                    Suggestion {i + 1}{' '}
+                    <small>
+                      {usedSessionCount(p)} session{usedSessionCount(p) === 1 ? '' : 's'}
+                      {gapIdleness(p) > 0 ? ` · ${gapIdleness(p)} waiting gap${gapIdleness(p) === 1 ? '' : 's'}` : ''}
+                      {p.unplacedPieceIds.length > 0 ? ` · ${p.unplacedPieceIds.length} unplaced` : ''}
+                    </small>
+                  </button>
+                ))}
+              </div>
+            )}
+            {additions.length > 0 && (
+              <div className="additions">
+                <p className="additions-title">
+                  💡 There is still room in this plan — these pieces aren&apos;t selected but would fit without
+                  any conflict:
+                </p>
+                <div className="additions-list">
+                  {additions.map((a) => (
+                    <label key={a.pieceId} className="check">
+                      <input
+                        type="checkbox"
+                        checked={checkedAdds.has(a.pieceId)}
+                        onChange={() =>
+                          setCheckedAdds((s) => {
+                            const next = new Set(s)
+                            if (next.has(a.pieceId)) next.delete(a.pieceId)
+                            else next.add(a.pieceId)
+                            return next
+                          })
+                        }
+                      />
+                      <span className="chip" style={pieceChipStyle(pieceById.get(a.pieceId))}>
+                        {pieceName.get(a.pieceId)}
+                      </span>
+                      <small className="hint">→ Session {a.sessionIndex + 1}</small>
+                    </label>
+                  ))}
+                  <button className="primary" onClick={applyAdditionsChecked} disabled={checkedAdds.size === 0}>
+                    Add to plan
+                  </button>
+                </div>
+              </div>
+            )}
             {!dayPlan.complete && (
               <p className="warn">
                 Not all pieces fit: {dayPlan.unplacedPieceIds.map((id) => pieceName.get(id) ?? '?').join(', ')}{' '}
@@ -913,6 +1008,8 @@ function DayPlanDetailView({ project, plan, update, onBack }: {
         )}
       </div>
 
+      <PlayerTimeline project={project} plan={plan} />
+
       {plan.sessions.map((session, i) => (
         <div key={i} className="day-session">
           <h3 className="day-session-title">
@@ -970,6 +1067,82 @@ function DayPlanDetailView({ project, plan, update, onBack }: {
         </button>
       </div>
     </section>
+  )
+}
+
+/**
+ * One row per player, one column per used session: which piece they play,
+ * where they wait between plays (gap), and where they're free at the edge of
+ * their day.
+ */
+function PlayerTimeline({ project, plan }: { project: Project; plan: DayPlan }) {
+  const used = plan.sessions
+    .map((s, index) => ({ ...s, index }))
+    .filter((s) => s.pieceIds.length > 0)
+  if (used.length === 0 || project.players.length === 0) return null
+
+  const pieceById = new Map(project.pieces.map((p) => [p.id, p]))
+  const players = [...project.players].sort(byName)
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h3>Player timelines</h3>
+        <span className="hint">
+          coloured = playing · <span className="timeline-legend gap">waiting</span> = idle between plays ·
+          empty = free before/after
+        </span>
+      </div>
+      <div className="timeline-wrap">
+        <table className="timeline">
+          <thead>
+            <tr>
+              <th>Player</th>
+              {used.map((s) => <th key={s.index}>S{s.index + 1}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {players.map((pl) => {
+              const busyAt = used.map((s) =>
+                s.pieceIds.map((id) => pieceById.get(id)).find((pc) => pc?.playerIds.includes(pl.id)),
+              )
+              const firstBusy = busyAt.findIndex(Boolean)
+              const lastBusy = busyAt.length - 1 - [...busyAt].reverse().findIndex(Boolean)
+              return (
+                <tr key={pl.id}>
+                  <th>{pl.name}</th>
+                  {used.map((s, j) => {
+                    const piece = busyAt[j]
+                    if (piece) {
+                      return (
+                        <td
+                          key={s.index}
+                          className="busy"
+                          style={pieceChipStyle(piece) ?? { background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                          title={`${piece.name} — Session ${s.index + 1}`}
+                        >
+                          {piece.name}
+                        </td>
+                      )
+                    }
+                    const isGap = firstBusy !== -1 && j > firstBusy && j < lastBusy
+                    return (
+                      <td
+                        key={s.index}
+                        className={isGap ? 'gap' : 'free'}
+                        title={isGap ? 'Waiting between plays' : 'Free'}
+                      >
+                        {isGap ? '⋯' : ''}
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 
