@@ -44,10 +44,16 @@ function makeRng(seed: number): () => number {
  * is conflict-free (no player in two pieces at once) and holds at most
  * `venues` pieces. Each piece is rehearsed once.
  *
- * Exact backtracking with most-constrained-first ordering, balanced session
- * choice and empty-session symmetry breaking, bounded by a node budget; if
- * the budget is exhausted or no full assignment exists, a greedy best-effort
- * pass places as many pieces as possible and reports the rest as unplaced.
+ * Objective: pack pieces into as FEW sessions as possible — venues exist so
+ * that conflict-free pieces rehearse concurrently, so three conflict-free
+ * pieces belong in one session across three venues, not in three sessions.
+ *
+ * Exact backtracking with most-constrained-first ordering, fullest-session-
+ * first choice and empty-session symmetry breaking, bounded by a node budget;
+ * if the budget is exhausted or no full assignment exists, a greedy
+ * best-effort pass places as many pieces as possible and reports the rest as
+ * unplaced. A consolidation pass then merges small sessions into fuller ones
+ * where conflicts allow, and used sessions are moved to the front of the day.
  */
 export function planDay(
   selectedPieces: Piece[],
@@ -109,7 +115,7 @@ export function planDay(
     if (i === n) return true
     if (++nodes > NODE_LIMIT) { aborted = true; return false }
     const piece = order[i]
-    // Balanced first (emptier sessions preferred) and at most one empty
+    // Fullest sessions first (pack the day tight) and at most one empty
     // session considered — empty sessions are interchangeable.
     let seenEmpty = false
     const candidates: number[] = []
@@ -120,7 +126,7 @@ export function planDay(
       }
       if (fits(piece, s)) candidates.push(s)
     }
-    candidates.sort((a, b) => sessions[a].length - sessions[b].length || sessionJitter[a] - sessionJitter[b])
+    candidates.sort((a, b) => sessions[b].length - sessions[a].length || sessionJitter[a] - sessionJitter[b])
     for (const s of candidates) {
       put(piece, s)
       if (search(i + 1)) return true
@@ -137,22 +143,24 @@ export function planDay(
     for (const piece of order) {
       let target = -1
       for (let s = 0; s < sessionCount; s++) {
-        if (fits(piece, s) && (target === -1 || sessions[s].length < sessions[target].length)) target = s
+        if (fits(piece, s) && (target === -1 || sessions[s].length > sessions[target].length)) target = s
       }
       if (target >= 0) put(piece, target)
       else unplaced.push(piece)
     }
   }
 
-  // Balance pass: even out session sizes by moving pieces into emptier
-  // sessions where they fit — evens out per-session utilisation.
+  // Consolidation pass: move pieces from smaller into equal-or-fuller
+  // sessions where they fit, emptying sessions and packing the day tighter.
+  // (Sum of squared session sizes strictly increases → terminates.)
   let movedSomething = true
   while (movedSomething) {
     movedSomething = false
     for (let from = 0; from < sessionCount; from++) {
       for (const piece of [...sessions[from]]) {
         for (let to = 0; to < sessionCount; to++) {
-          if (to === from || sessions[to].length + 1 >= sessions[from].length) continue
+          if (to === from || sessions[to].length === 0) continue
+          if (sessions[to].length < sessions[from].length) continue
           if (!fits(piece, to)) continue
           sessions[from].splice(sessions[from].indexOf(piece), 1)
           for (const id of playerSets[piece]) sessionPlayers[from].delete(id)
@@ -164,7 +172,12 @@ export function planDay(
     }
   }
 
-  const sessionPlans: SessionPlan[] = sessions.map((idxs) => {
+  // Used sessions first: the rehearsal day starts with full sessions and the
+  // free slots gather at the end.
+  const bySize = [...sessions.keys()].sort((a, b) => Number(sessions[a].length === 0) - Number(sessions[b].length === 0))
+  const orderedSessions = bySize.map((s) => sessions[s])
+
+  const sessionPlans: SessionPlan[] = orderedSessions.map((idxs) => {
     const used = new Set<string>()
     for (const idx of idxs) for (const id of playerSets[idx]) used.add(id)
     return {

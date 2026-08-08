@@ -14,12 +14,6 @@ as few players as possible sit around doing nothing.
 - **Assignments** — assign players to pieces from either side (pick a piece and tick
   players, or pick a player and tick pieces), plus a combined player × piece matrix
   view where every assignment is visible and toggleable at a glance.
-- **Scheduler** — select any set of pieces and get **every combination of pieces that
-  can rehearse concurrently without a player being needed in two venues at once**,
-  capped at the number of venues, ordered by the number of players utilised (most
-  first). Each combination also lists the idle players so they can be given self-study
-  or coaching tasks. A "full groupings only" filter hides combinations to which another
-  selected piece could still be added.
 - **Configuration sets** — a Configuration tab holds reusable sets. The built-in
   Instruments set ships with vl/vla/c/db/h/hsch/ob/fl/cl and can be extended; further
   sets can be created freely.
@@ -36,11 +30,11 @@ as few players as possible sit around doing nothing.
   listed together with the reason (e.g. a player who plays in more pieces than the day
   has sessions). Sessions are labelled morning/afternoon, reviewable like single
   combinations, re-shuffleable, and downloadable as a whole-day Excel plan.
-- **Combination review & export** — click a combination to open its session plan:
-  pieces laid out per venue (venue numbers freely swappable — they never affect the
-  conflict constraints), every player's instrument/section/position editable inline
-  with missing instruments or positions highlighted, an activity text per idle player
-  (self study, coaching, …), and a one-click Excel download of the plan.
+- **Day plan review & export** — one page showing the whole day: every session with
+  its venues (venue numbers freely swappable within a session), every player's
+  instrument/section/position editable inline with missing data highlighted, an
+  activity text per idle player (self study, coaching, …), and a one-click Excel
+  download of the reviewed plan.
 - **Settings** — number of venues (default 4), session duration (default 50 min,
   including the 10 min break), sessions per morning (default 4) and afternoon
   (default 3). Since every rehearsal block has the same length, piece duration is
