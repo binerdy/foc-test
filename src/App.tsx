@@ -72,6 +72,39 @@ export default function App() {
     setDirty(true)
   }, [])
 
+  const doSave = useCallback(async () => {
+    if (!project) return
+    try {
+      if (folder) {
+        const name = await saveProjectToFolder(folder, project)
+        flash(`Saved ${name} to “${folder.name}”`)
+        setDirty(false)
+        return
+      }
+      const outcome = await saveProjectFallback(project)
+      if (outcome === 'cancelled') {
+        flash('Save cancelled')
+        return
+      }
+      flash(outcome === 'shared' ? 'Project file shared — “Save to Files” stores it in a folder' : 'Project downloaded')
+      setDirty(false)
+    } catch (e) {
+      flash(`Save failed: ${(e as Error).message}`)
+    }
+  }, [project, folder, flash])
+
+  // Ctrl/Cmd+S saves from anywhere in the app.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's') {
+        e.preventDefault()
+        doSave()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [doSave])
+
   if (!project) {
     return (
       <StartScreen
@@ -84,7 +117,7 @@ export default function App() {
   return (
     <div className="app">
       <header className="topbar">
-        <div className="brand">🎼 Rehearsal Planner</div>
+        <div className="brand"><span aria-hidden="true">🎼</span><span className="brand-text"> Rehearsal Planner</span></div>
         <input
           className="project-name"
           value={project.name}
@@ -93,11 +126,10 @@ export default function App() {
         />
         <div className="topbar-actions">
           <FileMenu
-            project={project}
             folder={folder}
             setFolder={setFolder}
             dirty={dirty}
-            onSaved={() => setDirty(false)}
+            onSave={doSave}
             onLoaded={(p) => { setProject(p); setDirty(false); setDetail(null); flash(`Loaded “${p.name}”`) }}
             onNew={() => { setProject(createProject('New project')); setDirty(true); setDetail(null); setTab('players') }}
             flash={flash}
@@ -170,13 +202,12 @@ function StartScreen({ onCreate, onOpen }: { onCreate: (name: string) => void; o
 // ------------------------------------------------------------------- file menu
 
 function FileMenu({
-  project, folder, setFolder, dirty, onSaved, onLoaded, onNew, flash,
+  folder, setFolder, dirty, onSave, onLoaded, onNew, flash,
 }: {
-  project: Project
   folder: FileSystemDirectoryHandle | null
   setFolder: (h: FileSystemDirectoryHandle | null) => void
   dirty: boolean
-  onSaved: () => void
+  onSave: () => void
   onLoaded: (p: Project) => void
   onNew: () => void
   flash: (msg: string) => void
@@ -186,26 +217,6 @@ function FileMenu({
 
   const confirmDiscard = () =>
     !dirty || window.confirm('You have unsaved changes — discard them?')
-
-  const save = async () => {
-    try {
-      if (folder) {
-        const name = await saveProjectToFolder(folder, project)
-        flash(`Saved ${name} to “${folder.name}”`)
-        onSaved()
-        return
-      }
-      const outcome = await saveProjectFallback(project)
-      if (outcome === 'cancelled') {
-        flash('Save cancelled')
-        return
-      }
-      flash(outcome === 'shared' ? 'Project file shared — “Save to Files” stores it in a folder' : 'Project downloaded')
-      onSaved()
-    } catch (e) {
-      flash(`Save failed: ${(e as Error).message}`)
-    }
-  }
 
   const open = async () => {
     if (!confirmDiscard()) return
@@ -232,7 +243,7 @@ function FileMenu({
     <>
       <button onClick={() => { if (confirmDiscard()) onNew() }}>New</button>
       <button onClick={open}>Open</button>
-      <button className="primary" onClick={save} title={dirty ? 'You have unsaved changes' : 'All changes saved to file'}>
+      <button className="primary" onClick={onSave} title={dirty ? 'You have unsaved changes (Ctrl/Cmd+S)' : 'All changes saved to file (Ctrl/Cmd+S)'}>
         Save{dirty && <span className="unsaved-dot" aria-label="unsaved changes"> ●</span>}
       </button>
       {supportsFileSystemAccess ? (
@@ -437,7 +448,13 @@ function PlayersView({ project, update, onOpen }: {
   const add = (names: string[]) =>
     update((p) => ({ ...p, players: [...p.players, ...names.map((n) => ({ id: newId(), name: n }))] }))
 
-  const remove = (id: string) =>
+  const remove = (id: string) => {
+    const player = project.players.find((pl) => pl.id === id)
+    const inPieces = project.pieces.filter((pc) => pc.playerIds.includes(id)).length
+    if (
+      inPieces > 0 &&
+      !window.confirm(`Delete ${player?.name ?? 'this player'}? They play in ${inPieces} piece${inPieces === 1 ? '' : 's'}.`)
+    ) return
     update((p) => ({
       ...p,
       players: p.players.filter((pl) => pl.id !== id),
@@ -451,6 +468,7 @@ function PlayersView({ project, update, onOpen }: {
         }
       }),
     }))
+  }
 
   const togglePiece = (playerId: string, pieceId: string) =>
     update((p) => togglePieceAssignment(p, pieceId, playerId))
@@ -530,7 +548,15 @@ function PiecesView({ project, update, onOpen }: {
   const add = (names: string[]) =>
     update((p) => ({ ...p, pieces: [...p.pieces, ...names.map((n) => ({ id: newId(), name: n, playerIds: [] }))] }))
 
-  const remove = (id: string) => update((p) => ({ ...p, pieces: p.pieces.filter((pc) => pc.id !== id) }))
+  const remove = (id: string) => {
+    const piece = project.pieces.find((pc) => pc.id === id)
+    const playerCount = piece?.playerIds.length ?? 0
+    if (
+      playerCount > 0 &&
+      !window.confirm(`Delete ${piece?.name ?? 'this piece'}? It has ${playerCount} assigned player${playerCount === 1 ? '' : 's'}.`)
+    ) return
+    update((p) => ({ ...p, pieces: p.pieces.filter((pc) => pc.id !== id) }))
+  }
 
   const togglePlayer = (pieceId: string, playerId: string) =>
     update((p) => togglePieceAssignment(p, pieceId, playerId))
