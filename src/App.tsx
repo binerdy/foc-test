@@ -9,7 +9,6 @@ import {
   planDayVariants,
   planSignature,
   suggestAdditions,
-  usedSessionCount,
   type DayPlan,
 } from './dayplan'
 import {
@@ -722,7 +721,7 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
   const [activeIdx, setActiveIdx] = useState(0)
   const [seedBase, setSeedBase] = useState(1)
   const [reviewDay, setReviewDay] = useState(false)
-  const [checkedAdds, setCheckedAdds] = useState<Set<string>>(new Set())
+  const [checkedAdds, setCheckedAdds] = useState<Record<number, Set<string>>>({})
 
   const sessionCount = project.settings.morningSessions + project.settings.afternoonSessions
   const capacity = sessionCount * project.settings.venues
@@ -750,39 +749,44 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
 
   const makePlans = (base: number) => {
     setSeedBase(base)
-    setPlans(planDayVariants(selectedPieces, project.players, project.settings.venues, sessionCount, base))
+    // enumerate thoroughly up front — permutation-equivalent plans are
+    // deduplicated by signature, so only genuinely different partitions remain
+    setPlans(planDayVariants(selectedPieces, project.players, project.settings.venues, sessionCount, base, 24, 6))
     setActiveIdx(0)
     setReviewDay(false)
   }
 
-  // Free-capacity recommendation: unselected pieces that still fit into the
-  // active plan's sessions without conflicts.
-  const additions = useMemo(
-    () => (dayPlan ? suggestAdditions(dayPlan, project.pieces, selectedPieceIds, project.settings.venues) : []),
-    [dayPlan, project.pieces, selectedPieceIds, project.settings.venues],
+  // Free-capacity recommendation per suggestion: unselected pieces that still
+  // fit into that plan's sessions without conflicts.
+  const addsPerPlan = useMemo(
+    () => (plans ?? []).map((p) => suggestAdditions(p, project.pieces, selectedPieceIds, project.settings.venues)),
+    [plans, project.pieces, selectedPieceIds, project.settings.venues],
   )
 
   useEffect(() => {
-    setCheckedAdds(new Set(additions.map((a) => a.pieceId)))
-  }, [additions])
+    setCheckedAdds(Object.fromEntries(addsPerPlan.map((adds, i) => [i, new Set(adds.map((a) => a.pieceId))])))
+  }, [addsPerPlan])
 
-  const applyAdditionsChecked = () => {
-    if (!dayPlan) return
-    const chosen = additions.filter((a) => checkedAdds.has(a.pieceId))
+  const applyAdditionsChecked = (planIdx: number) => {
+    const plan = plans?.[planIdx]
+    if (!plan) return
+    const chosen = (addsPerPlan[planIdx] ?? []).filter((a) => checkedAdds[planIdx]?.has(a.pieceId))
     if (chosen.length === 0) return
-    const newPlan = applyAdditions(dayPlan, chosen, project.pieces, project.players)
+    const newPlan = applyAdditions(plan, chosen, project.pieces, project.players)
     const newSelection = new Set([...selectedPieceIds, ...chosen.map((a) => a.pieceId)])
     setSelectedPieceIds(newSelection)
-    // keep the extended plan as the active suggestion, fresh alternatives behind it
+    // keep the extended plan first, fresh alternatives behind it
     const alternatives = planDayVariants(
       project.pieces.filter((pc) => newSelection.has(pc.id)),
       project.players,
       project.settings.venues,
       sessionCount,
       seedBase + 101,
+      24,
+      6,
     )
     const sig = planSignature(newPlan)
-    setPlans([newPlan, ...alternatives.filter((p) => planSignature(p) !== sig)].slice(0, 4))
+    setPlans([newPlan, ...alternatives.filter((p) => planSignature(p) !== sig)].slice(0, 6))
     setActiveIdx(0)
   }
 
@@ -828,9 +832,6 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
             <small>({sessionCount} sessions × {project.settings.venues} venues = room for {capacity} pieces)</small>
           </h3>
           <span className="spacer" />
-          {plans && (
-            <button onClick={() => makePlans(seedBase + 8)}>More suggestions</button>
-          )}
           <button className="primary" onClick={() => makePlans(seedBase)} disabled={selectedPieceIds.size === 0}>
             Plan the day
           </button>
@@ -849,60 +850,9 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
           </p>
         ) : (
           <>
-            {plans && plans.length > 1 && (
-              <div className="suggestions">
-                {plans.map((p, i) => (
-                  <button
-                    key={i}
-                    className={i === activeIdx ? 'suggestion active' : 'suggestion'}
-                    onClick={() => setActiveIdx(i)}
-                  >
-                    Suggestion {i + 1}{' '}
-                    <small>
-                      {usedSessionCount(p)} session{usedSessionCount(p) === 1 ? '' : 's'}
-                      {gapIdleness(p) > 0 ? ` · ${gapIdleness(p)} waiting gap${gapIdleness(p) === 1 ? '' : 's'}` : ''}
-                      {p.unplacedPieceIds.length > 0 ? ` · ${p.unplacedPieceIds.length} unplaced` : ''}
-                    </small>
-                  </button>
-                ))}
-              </div>
-            )}
-            {additions.length > 0 && (
-              <div className="additions">
-                <p className="additions-title">
-                  💡 There is still room in this plan — these pieces aren&apos;t selected but would fit without
-                  any conflict:
-                </p>
-                <div className="additions-list">
-                  {additions.map((a) => (
-                    <label key={a.pieceId} className="check">
-                      <input
-                        type="checkbox"
-                        checked={checkedAdds.has(a.pieceId)}
-                        onChange={() =>
-                          setCheckedAdds((s) => {
-                            const next = new Set(s)
-                            if (next.has(a.pieceId)) next.delete(a.pieceId)
-                            else next.add(a.pieceId)
-                            return next
-                          })
-                        }
-                      />
-                      <span className="chip" style={pieceChipStyle(pieceById.get(a.pieceId))}>
-                        {pieceName.get(a.pieceId)}
-                      </span>
-                      <small className="hint">→ Session {a.sessionIndex + 1}</small>
-                    </label>
-                  ))}
-                  <button className="primary" onClick={applyAdditionsChecked} disabled={checkedAdds.size === 0}>
-                    Add to plan
-                  </button>
-                </div>
-              </div>
-            )}
-            {!dayPlan.complete && (
+            {!plans![0].complete && (
               <p className="warn">
-                Not all pieces fit: {dayPlan.unplacedPieceIds.map((id) => pieceName.get(id) ?? '?').join(', ')}{' '}
+                Not all pieces fit: {plans![0].unplacedPieceIds.map((id) => pieceName.get(id) ?? '?').join(', ')}{' '}
                 stay unplaced.
                 {overbookedPlayers(selectedPieces, sessionCount).map(({ playerId, count }) => (
                   <span key={playerId}>
@@ -912,45 +862,90 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
                 ))}
               </p>
             )}
-            <ol className="combos">
-              {dayPlan.sessions.map((session, i) => (
-                <li key={i} className="combo">
-                  <div className="combo-row static">
-                    <div className="combo-body">
-                      <div className="session-title">
-                        <strong>Session {i + 1}</strong>{' '}
-                        <small className="hint">{i < project.settings.morningSessions ? 'morning' : 'afternoon'}</small>
-                      </div>
-                      {session.pieceIds.length === 0 ? (
-                        <div className="combo-meta">— free —</div>
-                      ) : (
-                        <>
-                          <div className="combo-pieces">
-                            {session.pieceIds.map((id) => (
-                              <span key={id} className="chip big" style={pieceChipStyle(pieceById.get(id))}>
-                                {pieceName.get(id)}
-                              </span>
-                            ))}
-                          </div>
-                          <div className="combo-meta">
-                            <strong>{session.playerIds.length}</strong> of {project.players.length} players busy
-                            {session.idlePlayerIds.length > 0 ? (
-                              <span className="idle"> · idle: {session.idlePlayerIds.map((id) => playerName.get(id)).join(', ')}</span>
-                            ) : (
-                              <span className="all-busy"> · everyone plays 🎉</span>
-                            )}
-                          </div>
-                        </>
-                      )}
+            {plans!.length > 1 && (
+              <p className="hint">
+                {plans!.length} genuinely different arrangements found — pick the one you like and open its plan
+                details.
+              </p>
+            )}
+            <div className="plan-list">
+              {plans!.map((p, i) => {
+                const used = p.sessions.map((s, idx) => ({ ...s, idx })).filter((s) => s.pieceIds.length > 0)
+                const freeCount = p.sessions.length - used.length
+                const gaps = gapIdleness(p)
+                const adds = addsPerPlan[i] ?? []
+                return (
+                  <div key={i} className="plan-option">
+                    <div className="plan-option-head">
+                      <strong>Suggestion {i + 1}</strong>
+                      <span className="hint">
+                        {used.length} session{used.length === 1 ? '' : 's'}
+                        {gaps > 0 ? ` · ${gaps} waiting gap${gaps === 1 ? '' : 's'}` : ' · no waiting'}
+                        {p.unplacedPieceIds.length > 0 ? ` · ${p.unplacedPieceIds.length} unplaced` : ''}
+                      </span>
+                      <span className="spacer" />
+                      <button className="primary" onClick={() => { setActiveIdx(i); setReviewDay(true) }}>
+                        Plan details →
+                      </button>
                     </div>
+                    {used.map((s) => (
+                      <div key={s.idx} className="plan-session-line">
+                        <span className="plan-session-label">
+                          S{s.idx + 1}{' '}
+                          <small className="hint">{s.idx < project.settings.morningSessions ? 'am' : 'pm'}</small>
+                        </span>
+                        <span className="chips">
+                          {s.pieceIds.map((id) => (
+                            <span key={id} className="chip" style={pieceChipStyle(pieceById.get(id))}>
+                              {pieceName.get(id)}
+                            </span>
+                          ))}
+                        </span>
+                        <span className="hint plan-idle">
+                          {s.idlePlayerIds.length > 0 ? `${s.idlePlayerIds.length} idle` : 'all busy 🎉'}
+                        </span>
+                      </div>
+                    ))}
+                    {freeCount > 0 && (
+                      <div className="plan-session-line">
+                        <span className="plan-session-label" />
+                        <span className="hint">+ {freeCount} free session{freeCount === 1 ? '' : 's'}</span>
+                      </div>
+                    )}
+                    {adds.length > 0 && (
+                      <div className="additions compact">
+                        <span className="additions-title">💡 Fits in too:</span>
+                        {adds.map((a) => (
+                          <label key={a.pieceId} className="check">
+                            <input
+                              type="checkbox"
+                              checked={checkedAdds[i]?.has(a.pieceId) ?? false}
+                              onChange={() =>
+                                setCheckedAdds((all) => {
+                                  const next = new Set(all[i] ?? [])
+                                  if (next.has(a.pieceId)) next.delete(a.pieceId)
+                                  else next.add(a.pieceId)
+                                  return { ...all, [i]: next }
+                                })
+                              }
+                            />
+                            <span className="chip" style={pieceChipStyle(pieceById.get(a.pieceId))}>
+                              {pieceName.get(a.pieceId)}
+                            </span>
+                            <small className="hint">→ S{a.sessionIndex + 1}</small>
+                          </label>
+                        ))}
+                        <button
+                          onClick={() => applyAdditionsChecked(i)}
+                          disabled={(checkedAdds[i]?.size ?? 0) === 0}
+                        >
+                          Add to this plan
+                        </button>
+                      </div>
+                    )}
                   </div>
-                </li>
-              ))}
-            </ol>
-            <div className="detail-actions">
-              <button className="primary" onClick={() => setReviewDay(true)}>
-                Review day plan →
-              </button>
+                )
+              })}
             </div>
           </>
         )}
