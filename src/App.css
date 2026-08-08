@@ -2,28 +2,53 @@
   /* The app is light-only; without this, iOS Safari in dark mode substitutes
      its own dark-mode control colors (white button text on our white buttons). */
   color-scheme: light;
-  --bg: #f6f7f9;
+  /* Warm paper shell tuned to the pastel piece/number palette: the accent is
+     a muted periwinkle from the same family instead of a saturated web blue. */
+  --bg: #f7f5f1;
   --panel: #ffffff;
-  --border: #dde1e6;
-  --text: #1d2129;
-  --muted: #6b7280;
-  --accent: #2d6cdf;
-  --accent-soft: #e6eefc;
-  --danger: #c0392b;
-  --warn-bg: #fff6e5;
-  --warn-border: #f0c060;
+  --border: #e6e2d9;
+  --text: #2a2d34;
+  --muted: #6f6d75;
+  --accent: #4f5fbf;
+  --accent-strong: #3f4da6;
+  --accent-soft: #eceefb;
+  --danger: #b04a42;
+  --warn-bg: #fdf4de;
+  --warn-border: #ecd9a6;
+  --radius: 10px;
+  --shadow: 0 1px 3px rgba(44, 42, 84, 0.08);
 }
 
 * { box-sizing: border-box; }
 
 body {
   margin: 0;
-  font-family: system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  font-family: 'Avenir Next', 'Segoe UI', system-ui, -apple-system, Roboto, sans-serif;
   background: var(--bg);
   color: var(--text);
 }
 
-.app { min-height: 100vh; display: flex; flex-direction: column; }
+/* Signature strip: the pastel palette itself, along the very top of the app. */
+body::before {
+  content: '';
+  display: block;
+  height: 5px;
+  background: linear-gradient(
+    90deg,
+    #f5bcbc, #f6d0b3, #f8e6ae, #e8f0b3, #c9ecc0, #bfead9,
+    #bde3f0, #c3cdf2, #d6c4f0, #ecc4ea, #f3c3d6
+  );
+}
+
+h1, h2, h3 { letter-spacing: -0.01em; }
+
+.app {
+  min-height: 100vh;
+  min-height: 100dvh; /* stable under mobile browser chrome */
+  display: flex;
+  flex-direction: column;
+}
+
 
 /* ---------- top bar ---------- */
 .topbar {
@@ -64,6 +89,10 @@ body {
   background: var(--panel);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  /* Navigation stays reachable while scrolling long pages (e.g. day review). */
+  position: sticky;
+  top: 0;
+  z-index: 30;
 }
 .tab {
   border: 1px solid transparent;
@@ -91,7 +120,7 @@ button {
   font: inherit;
   padding: 7px 14px;
   border: 1px solid var(--border);
-  border-radius: 6px;
+  border-radius: 8px;
   background: var(--panel);
   color: var(--text);
   cursor: pointer;
@@ -99,9 +128,13 @@ button {
   appearance: none;
 }
 button:hover:not(:disabled) { border-color: var(--accent); color: var(--accent); }
+button:focus-visible, .tab:focus-visible, input:focus-visible, select:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
 button:disabled { opacity: 0.5; cursor: not-allowed; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
-button.primary:hover:not(:disabled) { background: #2159bd; color: #fff; }
+button.primary:hover:not(:disabled) { background: var(--accent-strong); color: #fff; }
 button.link {
   border: none;
   background: none;
@@ -134,11 +167,12 @@ input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent)
 /* ---------- start screen ---------- */
 .start {
   max-width: 420px;
-  margin: 12vh auto;
+  margin: 10vh auto;
   padding: 32px;
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 14px;
+  box-shadow: var(--shadow);
   text-align: center;
 }
 .start h1 { margin-top: 0; }
@@ -154,7 +188,8 @@ input:focus { outline: 2px solid var(--accent-soft); border-color: var(--accent)
 .card {
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
   padding: 10px 14px;
 }
 .card-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
@@ -295,7 +330,8 @@ select {
   max-height: calc(100vh - 210px);
   background: var(--panel);
   border: 1px solid var(--border);
-  border-radius: 8px;
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
 }
 /* Collapsed borders detach from sticky cells and scroll away with the
    content, so use separate borders drawn on each cell's right/bottom edge. */
@@ -319,12 +355,19 @@ select {
 }
 .matrix small { color: var(--muted); font-weight: 400; }
 .matrix td { cursor: pointer; min-width: 44px; user-select: none; }
+.matrix tbody tr:hover td:not(.on) { background: #f0f4fb; }
 .matrix td:hover { background: var(--accent-soft); }
 .matrix td.on { background: var(--accent-soft); color: var(--accent); font-weight: 700; }
 
 /* ---------- scheduler ---------- */
 .scheduler { display: flex; flex-direction: column; gap: 16px; }
-.panel { background: var(--panel); border: 1px solid var(--border); border-radius: 8px; padding: 14px 16px; }
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 14px 16px;
+}
 .panel-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 8px; }
 .panel-head h3 { margin: 0; font-size: 1.05rem; }
 .panel-head small { color: var(--muted); font-weight: 400; }
@@ -384,7 +427,8 @@ select {
 }
 .modal {
   background: var(--panel);
-  border-radius: 10px;
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(44, 42, 84, 0.18);
   padding: 20px 24px;
   min-width: 320px;
   max-width: 90vw;
@@ -394,3 +438,39 @@ select {
 .modal h3 { margin-top: 0; }
 .file-list { list-style: none; padding: 0; }
 .file-list li { padding: 2px 0; }
+
+/* ---------- responsive: small screens ---------- */
+@media (max-width: 700px) {
+  .content { padding: 10px; }
+  .topbar { padding: 8px 10px; gap: 8px; }
+  .brand-text { display: none; } /* icon-only brand frees room for the project name */
+  .project-name { min-width: 110px; }
+  .topbar-actions { gap: 6px; }
+  .tabs { padding: 6px 8px 0; }
+  .panel { padding: 10px 12px; }
+  .modal { min-width: 0; width: 92vw; padding: 16px; }
+  .add-row input { max-width: none; }
+  .activity-input { min-width: 140px; }
+
+  /* Data tables scroll inside their panel instead of stretching the page. */
+  .seat-table { display: block; overflow-x: auto; }
+  .seat-table th, .seat-table td { padding: 6px 8px; }
+  .seat-table tbody th { max-width: 34vw; overflow: hidden; text-overflow: ellipsis; }
+
+  .matrix-wrap { max-height: calc(100dvh - 200px); }
+  .detail-head h2 { font-size: 1.3rem; }
+  .day-session-title { font-size: 1rem; }
+}
+
+/* ---------- touch ergonomics ---------- */
+@media (pointer: coarse) {
+  button { padding: 10px 14px; }
+  button.link { padding: 8px 6px; }
+  .tab { padding: 10px 14px; }
+  .check { padding: 9px 6px; }
+  input[type='checkbox'] { width: 18px; height: 18px; }
+  .matrix td { padding: 10px; min-width: 48px; }
+  .swatch { width: 34px; height: 34px; }
+  .dot { width: 24px; height: 24px; min-width: 24px; }
+  .num-remove { padding: 4px 8px; }
+}
