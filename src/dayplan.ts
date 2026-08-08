@@ -18,6 +18,62 @@ export function usedSessionCount(plan: DayPlan): number {
   return plan.sessions.filter((s) => s.pieceIds.length > 0).length
 }
 
+/** Total gap idleness of an ordered list of (used) sessions: idle sessions
+ *  sandwiched between a player's first and last busy session — the annoying
+ *  kind of waiting, as opposed to free time at the edge of the day. */
+function gapsForOrder(sessions: SessionPlan[]): number {
+  const first = new Map<string, number>()
+  const last = new Map<string, number>()
+  const count = new Map<string, number>()
+  sessions.forEach((s, i) => {
+    for (const id of s.playerIds) {
+      if (!first.has(id)) first.set(id, i)
+      last.set(id, i)
+      count.set(id, (count.get(id) ?? 0) + 1)
+    }
+  })
+  let gaps = 0
+  for (const [id, f] of first) gaps += (last.get(id)! - f + 1) - (count.get(id) ?? 0)
+  return gaps
+}
+
+/** Gap idleness of a plan (empty sessions at the end of the day don't count). */
+export function gapIdleness(plan: DayPlan): number {
+  return gapsForOrder(plan.sessions.filter((s) => s.pieceIds.length > 0))
+}
+
+/** Reorder used sessions to minimise gap idleness (exhaustive for ≤ 7 used
+ *  sessions — session slots are interchangeable, only the order changes). */
+function minimiseGaps(sessionPlans: SessionPlan[]): SessionPlan[] {
+  const used = sessionPlans.filter((s) => s.pieceIds.length > 0)
+  const empty = sessionPlans.filter((s) => s.pieceIds.length === 0)
+  if (used.length < 3 || used.length > 7) return sessionPlans
+  let best = used
+  let bestGaps = gapsForOrder(used)
+  // Heap's algorithm over a working copy
+  const arr = [...used]
+  const k = arr.length
+  const c = new Array<number>(k).fill(0)
+  let i = 0
+  while (i < k && bestGaps > 0) {
+    if (c[i] < i) {
+      const swap = i % 2 === 0 ? 0 : c[i]
+      ;[arr[swap], arr[i]] = [arr[i], arr[swap]]
+      const g = gapsForOrder(arr)
+      if (g < bestGaps) {
+        bestGaps = g
+        best = [...arr]
+      }
+      c[i]++
+      i = 0
+    } else {
+      c[i] = 0
+      i++
+    }
+  }
+  return [...best, ...empty]
+}
+
 /** Order-insensitive identity of a plan, for deduplicating suggestions. */
 export function planSignature(plan: DayPlan): string {
   const groups = plan.sessions
@@ -54,7 +110,8 @@ export function planDayVariants(
   variants.sort(
     (a, b) =>
       a.unplacedPieceIds.length - b.unplacedPieceIds.length ||
-      usedSessionCount(a) - usedSessionCount(b),
+      usedSessionCount(a) - usedSessionCount(b) ||
+      gapIdleness(a) - gapIdleness(b),
   )
   return variants.slice(0, keep)
 }
@@ -304,7 +361,7 @@ export function planDay(
   })
 
   return {
-    sessions: sessionPlans,
+    sessions: minimiseGaps(sessionPlans),
     unplacedPieceIds: unplaced.map((idx) => selectedPieces[idx].id),
     complete: unplaced.length === 0,
   }

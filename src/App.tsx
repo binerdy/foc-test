@@ -4,6 +4,7 @@ import { inkFor, PASTEL_PALETTE } from './colors'
 import { exportDayPlan } from './excel'
 import {
   applyAdditions,
+  gapIdleness,
   overbookedPlayers,
   planDayVariants,
   planSignature,
@@ -846,6 +847,7 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
                     Suggestion {i + 1}{' '}
                     <small>
                       {usedSessionCount(p)} session{usedSessionCount(p) === 1 ? '' : 's'}
+                      {gapIdleness(p) > 0 ? ` · ${gapIdleness(p)} waiting gap${gapIdleness(p) === 1 ? '' : 's'}` : ''}
                       {p.unplacedPieceIds.length > 0 ? ` · ${p.unplacedPieceIds.length} unplaced` : ''}
                     </small>
                   </button>
@@ -1006,6 +1008,8 @@ function DayPlanDetailView({ project, plan, update, onBack }: {
         )}
       </div>
 
+      <PlayerTimeline project={project} plan={plan} />
+
       {plan.sessions.map((session, i) => (
         <div key={i} className="day-session">
           <h3 className="day-session-title">
@@ -1063,6 +1067,82 @@ function DayPlanDetailView({ project, plan, update, onBack }: {
         </button>
       </div>
     </section>
+  )
+}
+
+/**
+ * One row per player, one column per used session: which piece they play,
+ * where they wait between plays (gap), and where they're free at the edge of
+ * their day.
+ */
+function PlayerTimeline({ project, plan }: { project: Project; plan: DayPlan }) {
+  const used = plan.sessions
+    .map((s, index) => ({ ...s, index }))
+    .filter((s) => s.pieceIds.length > 0)
+  if (used.length === 0 || project.players.length === 0) return null
+
+  const pieceById = new Map(project.pieces.map((p) => [p.id, p]))
+  const players = [...project.players].sort(byName)
+
+  return (
+    <div className="panel">
+      <div className="panel-head">
+        <h3>Player timelines</h3>
+        <span className="hint">
+          coloured = playing · <span className="timeline-legend gap">waiting</span> = idle between plays ·
+          empty = free before/after
+        </span>
+      </div>
+      <div className="timeline-wrap">
+        <table className="timeline">
+          <thead>
+            <tr>
+              <th>Player</th>
+              {used.map((s) => <th key={s.index}>S{s.index + 1}</th>)}
+            </tr>
+          </thead>
+          <tbody>
+            {players.map((pl) => {
+              const busyAt = used.map((s) =>
+                s.pieceIds.map((id) => pieceById.get(id)).find((pc) => pc?.playerIds.includes(pl.id)),
+              )
+              const firstBusy = busyAt.findIndex(Boolean)
+              const lastBusy = busyAt.length - 1 - [...busyAt].reverse().findIndex(Boolean)
+              return (
+                <tr key={pl.id}>
+                  <th>{pl.name}</th>
+                  {used.map((s, j) => {
+                    const piece = busyAt[j]
+                    if (piece) {
+                      return (
+                        <td
+                          key={s.index}
+                          className="busy"
+                          style={pieceChipStyle(piece) ?? { background: 'var(--accent-soft)', color: 'var(--accent)' }}
+                          title={`${piece.name} — Session ${s.index + 1}`}
+                        >
+                          {piece.name}
+                        </td>
+                      )
+                    }
+                    const isGap = firstBusy !== -1 && j > firstBusy && j < lastBusy
+                    return (
+                      <td
+                        key={s.index}
+                        className={isGap ? 'gap' : 'free'}
+                        title={isGap ? 'Waiting between plays' : 'Free'}
+                      >
+                        {isGap ? '⋯' : ''}
+                      </td>
+                    )
+                  })}
+                </tr>
+              )
+            })}
+          </tbody>
+        </table>
+      </div>
+    </div>
   )
 }
 

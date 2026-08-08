@@ -393,6 +393,29 @@ select {
 .combo-open { color: var(--accent); white-space: nowrap; font-size: 0.9rem; }
 .session-title { margin-bottom: 4px; }
 
+/* player timelines */
+.timeline-wrap { overflow-x: auto; }
+.timeline { border-collapse: collapse; }
+.timeline th, .timeline td { border: 1px solid var(--border); padding: 4px 8px; text-align: center; }
+.timeline thead th { background: var(--bg); font-size: 0.85rem; }
+.timeline tbody th { text-align: left; font-weight: 600; white-space: nowrap; font-size: 0.9rem; }
+.timeline td {
+  font-size: 0.78rem;
+  max-width: 110px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 56px;
+}
+.timeline td.gap { background: var(--warn-bg); color: #a07912; }
+.timeline td.free { background: var(--bg); }
+.timeline-legend.gap {
+  background: var(--warn-bg);
+  color: #a07912;
+  padding: 1px 8px;
+  border-radius: 4px;
+}
+
 /* day plan suggestions + free-capacity recommendation */
 .suggestions { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 12px; }
 .suggestion { padding: 6px 12px; }
