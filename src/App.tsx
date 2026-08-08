@@ -1,8 +1,7 @@
 import { useCallback, useEffect, useMemo, useState, type ClipboardEvent, type CSSProperties } from 'react'
 import { createProject, INSTRUMENTS_SET_ID, newId, type Piece, type Project, type Seat } from './types'
-import { findCombinations, type Combination } from './combinations'
 import { inkFor, PASTEL_PALETTE } from './colors'
-import { exportCombinationPlan, exportDayPlan } from './excel'
+import { exportDayPlan } from './excel'
 import { overbookedPlayers, planDay, type DayPlan } from './dayplan'
 import {
   autosave,
@@ -697,12 +696,9 @@ function MatrixView({ project, update }: { project: Project; update: (fn: (p: Pr
 
 function SchedulerView({ project, update }: { project: Project; update: (fn: (p: Project) => Project) => void }) {
   const [selectedPieceIds, setSelectedPieceIds] = useState<Set<string>>(new Set())
-  const [selectedCombo, setSelectedCombo] = useState<Combination | null>(null)
   const [dayPlan, setDayPlan] = useState<DayPlan | null>(null)
   const [daySeed, setDaySeed] = useState(1)
   const [reviewDay, setReviewDay] = useState(false)
-  const [onlyMaximal, setOnlyMaximal] = useState(true)
-  const [shown, setShown] = useState(100)
 
   const sessionCount = project.settings.morningSessions + project.settings.afternoonSessions
   const capacity = sessionCount * project.settings.venues
@@ -718,10 +714,8 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
       else next.add(id)
       return next
     })
-    setSelectedCombo(null)
     setDayPlan(null)
     setReviewDay(false)
-    setShown(100)
   }
 
   const selectedPieces = useMemo(
@@ -735,16 +729,6 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
     setReviewDay(false)
   }
 
-  const result = useMemo(() => {
-    const pieces = project.pieces.filter((pc) => selectedPieceIds.has(pc.id))
-    return findCombinations(pieces, project.players, project.settings.venues)
-  }, [project, selectedPieceIds])
-
-  const visible = useMemo(
-    () => (onlyMaximal ? result.combinations.filter((c) => c.maximal) : result.combinations),
-    [result, onlyMaximal],
-  )
-
   if (reviewDay && dayPlan) {
     return (
       <DayPlanDetailView
@@ -752,17 +736,6 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
         plan={dayPlan}
         update={update}
         onBack={() => setReviewDay(false)}
-      />
-    )
-  }
-
-  if (selectedCombo) {
-    return (
-      <CombinationDetailView
-        project={project}
-        combination={selectedCombo}
-        update={update}
-        onBack={() => setSelectedCombo(null)}
       />
     )
   }
@@ -814,7 +787,8 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
         {!dayPlan ? (
           <p className="hint">
             Distributes every selected piece over the day&apos;s sessions so that no player is needed in two
-            venues of the same session. Each piece is rehearsed once.
+            venues of the same session. Pieces are packed into as few sessions as possible — conflict-free
+            pieces rehearse concurrently across venues. Each piece is rehearsed once.
           </p>
         ) : (
           <>
@@ -873,72 +847,11 @@ function SchedulerView({ project, update }: { project: Project; update: (fn: (p:
           </>
         )}
       </div>
-
-      <div className="panel">
-        <div className="panel-head">
-          <h3>3 · Single-session combinations <small>(max {project.settings.venues} venues, most players utilised first)</small></h3>
-          <span className="spacer" />
-          <label className="check">
-            <input type="checkbox" checked={onlyMaximal} onChange={(e) => setOnlyMaximal(e.target.checked)} />
-            Only full groupings (no piece could be added)
-          </label>
-        </div>
-        {selectedPieceIds.size === 0 ? (
-          <p className="hint">Select pieces above to see every way they can rehearse at the same time without a player being needed twice.</p>
-        ) : visible.length === 0 ? (
-          <p className="hint">No conflict-free combination found for this selection.</p>
-        ) : (
-          <>
-            {result.truncated && (
-              <p className="warn">Too many combinations — showing the first {result.combinations.length.toLocaleString()} found. Narrow the piece selection.</p>
-            )}
-            <p className="hint">
-              {visible.length.toLocaleString()} combination{visible.length === 1 ? '' : 's'} · click one to review venues,
-              seats and idle activities, then download it.
-            </p>
-            <ol className="combos">
-              {visible.slice(0, shown).map((c, i) => (
-                <li key={i} className="combo">
-                  <button className="combo-row" onClick={() => setSelectedCombo(c)}>
-                    <div className="combo-body">
-                      <div className="combo-pieces">
-                        {c.pieceIds.map((id) => (
-                          <span key={id} className="chip big" style={pieceChipStyle(pieceById.get(id))} title={pieceNames(project, id)}>
-                            {pieceName.get(id)}
-                          </span>
-                        ))}
-                      </div>
-                      <div className="combo-meta">
-                        <strong>{c.playerIds.length}</strong> of {project.players.length} players busy
-                        {c.idlePlayerIds.length > 0 ? (
-                          <span className="idle"> · idle: {c.idlePlayerIds.map((id) => playerName.get(id)).join(', ')}</span>
-                        ) : (
-                          <span className="all-busy"> · everyone plays 🎉</span>
-                        )}
-                      </div>
-                    </div>
-                    <span className="combo-open">Review →</span>
-                  </button>
-                </li>
-              ))}
-            </ol>
-            {visible.length > shown && (
-              <button onClick={() => setShown((s) => s + 200)}>Show more ({(visible.length - shown).toLocaleString()} remaining)</button>
-            )}
-          </>
-        )}
-      </div>
-
     </section>
   )
-
-  function pieceNames(p: Project, pieceId: string): string {
-    const pc = p.pieces.find((x) => x.id === pieceId)
-    return (pc?.playerIds ?? []).map((id) => playerName.get(id) ?? '?').join(', ')
-  }
 }
 
-// ------------------------------------------------------- combination detail
+// ------------------------------------------------------- day plan detail
 
 /**
  * Review page for the whole day plan: every session with its venues and
@@ -1137,98 +1050,6 @@ function SessionVenues({ project, pieceIds, venueOf, onMove, update, hideEmpty =
         )
       })}
     </div>
-  )
-}
-
-/**
- * Review page for one combination: pieces spread over venues (venue numbers
- * are swappable — they never affect the conflict constraints), every playing
- * player's seat with missing instrument/position highlighted and editable,
- * idle players with a free activity text, and the Excel download.
- */
-function CombinationDetailView({ project, combination, update, onBack, title = 'Session plan', backLabel = '← Back to combinations' }: {
-  project: Project
-  combination: Combination
-  update: (fn: (p: Project) => Project) => void
-  onBack: () => void
-  title?: string
-  backLabel?: string
-}) {
-  const [venueOf, setVenueOf] = useState<Record<string, number>>(() =>
-    Object.fromEntries(combination.pieceIds.map((id, i) => [id, i + 1])),
-  )
-  const [activities, setActivities] = useState<Record<string, string>>({})
-
-  const playerName = useMemo(() => new Map(project.players.map((p) => [p.id, p.name])), [project.players])
-
-  // Assigning a piece to an occupied venue swaps the two pieces.
-  const moveToVenue = (pieceId: string, venue: number) =>
-    setVenueOf((v) => {
-      const occupant = Object.keys(v).find((id) => v[id] === venue)
-      const next = { ...v, [pieceId]: venue }
-      if (occupant && occupant !== pieceId) next[occupant] = v[pieceId]
-      return next
-    })
-
-  const download = () =>
-    exportCombinationPlan(project, { combination, venueOf, activities })
-
-  const missingSeats = countMissingSeats(project, combination.pieceIds)
-
-  return (
-    <section>
-      <div className="detail-head">
-        <button className="link" onClick={onBack}>{backLabel}</button>
-        <h2>{title}</h2>
-        <p className="hint">
-          One {project.settings.sessionMinutes} min session · {combination.playerIds.length} of{' '}
-          {project.players.length} players busy. Venue numbers can be swapped freely — they don&apos;t affect
-          the conflict constraints.
-        </p>
-        {missingSeats > 0 && (
-          <p className="warn">
-            {missingSeats} seat{missingSeats === 1 ? ' is' : 's are'} missing an instrument or position —
-            highlighted below, fix them right here.
-          </p>
-        )}
-      </div>
-
-      <SessionVenues project={project} pieceIds={combination.pieceIds} venueOf={venueOf} onMove={moveToVenue} update={update} />
-
-      <div className="panel">
-        <div className="panel-head">
-          <h3>Idle players</h3>
-        </div>
-        {combination.idlePlayerIds.length === 0 ? (
-          <p className="hint">Everyone plays in this combination 🎉</p>
-        ) : (
-          <table className="seat-table">
-            <thead>
-              <tr><th>Player</th><th>Activity</th></tr>
-            </thead>
-            <tbody>
-              {combination.idlePlayerIds.map((id) => (
-                <tr key={id}>
-                  <th>{playerName.get(id) ?? '?'}</th>
-                  <td>
-                    <input
-                      className="activity-input"
-                      placeholder="e.g. self study, coaching…"
-                      value={activities[id] ?? ''}
-                      onChange={(e) => setActivities((a) => ({ ...a, [id]: e.target.value }))}
-                    />
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        )}
-      </div>
-
-      <div className="detail-actions">
-        <button className="primary" onClick={download}>Download session plan as Excel</button>
-      </div>
-    </section>
   )
 }
 
