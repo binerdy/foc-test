@@ -13,6 +13,122 @@ export interface DayPlan {
   complete: boolean
 }
 
+/** Sessions actually holding pieces. */
+export function usedSessionCount(plan: DayPlan): number {
+  return plan.sessions.filter((s) => s.pieceIds.length > 0).length
+}
+
+/** Order-insensitive identity of a plan, for deduplicating suggestions. */
+export function planSignature(plan: DayPlan): string {
+  const groups = plan.sessions
+    .filter((s) => s.pieceIds.length > 0)
+    .map((s) => [...s.pieceIds].sort().join('+'))
+    .sort()
+    .join('|')
+  return `${groups}#${[...plan.unplacedPieceIds].sort().join(',')}`
+}
+
+/**
+ * Generate several distinct day-plan suggestions: run the solver with a range
+ * of seeds, deduplicate equivalent plans and keep the best few (fewest
+ * unplaced pieces, then fewest sessions used).
+ */
+export function planDayVariants(
+  selectedPieces: Piece[],
+  allPlayers: Player[],
+  venues: number,
+  sessionCount: number,
+  seedBase: number,
+  tries = 8,
+  keep = 4,
+): DayPlan[] {
+  const seen = new Set<string>()
+  const variants: DayPlan[] = []
+  for (let i = 0; i < tries; i++) {
+    const plan = planDay(selectedPieces, allPlayers, venues, sessionCount, seedBase + i)
+    const sig = planSignature(plan)
+    if (seen.has(sig)) continue
+    seen.add(sig)
+    variants.push(plan)
+  }
+  variants.sort(
+    (a, b) =>
+      a.unplacedPieceIds.length - b.unplacedPieceIds.length ||
+      usedSessionCount(a) - usedSessionCount(b),
+  )
+  return variants.slice(0, keep)
+}
+
+export interface PieceSuggestion {
+  pieceId: string
+  /** Session (index into plan.sessions) where the piece would fit. */
+  sessionIndex: number
+}
+
+/**
+ * Free-capacity recommendation: pieces NOT in the current selection that would
+ * still fit into the plan — a session with a free venue and no player overlap.
+ * Capacity is reserved greedily so the returned suggestions are jointly
+ * applicable (and any subset of them too).
+ */
+export function suggestAdditions(
+  plan: DayPlan,
+  allPieces: Piece[],
+  selectedIds: Set<string>,
+  venues: number,
+): PieceSuggestion[] {
+  const sessions = plan.sessions.map((s) => ({
+    count: s.pieceIds.length,
+    players: new Set(s.playerIds),
+  }))
+  const suggestions: PieceSuggestion[] = []
+  for (const piece of allPieces) {
+    if (selectedIds.has(piece.id)) continue
+    let best = -1
+    for (let s = 0; s < sessions.length; s++) {
+      if (sessions[s].count >= venues) continue
+      if (piece.playerIds.some((id) => sessions[s].players.has(id))) continue
+      // pack: prefer the fullest session that still has room, but avoid
+      // opening a brand-new session for a mere suggestion
+      if (sessions[s].count === 0) continue
+      if (best === -1 || sessions[s].count > sessions[best].count) best = s
+    }
+    if (best === -1) continue
+    suggestions.push({ pieceId: piece.id, sessionIndex: best })
+    sessions[best].count++
+    for (const id of piece.playerIds) sessions[best].players.add(id)
+  }
+  return suggestions
+}
+
+/** Insert suggested pieces into their sessions and recompute busy/idle players. */
+export function applyAdditions(
+  plan: DayPlan,
+  additions: PieceSuggestion[],
+  allPieces: Piece[],
+  allPlayers: Player[],
+): DayPlan {
+  const pieceById = new Map(allPieces.map((p) => [p.id, p]))
+  const sessions = plan.sessions.map((s) => ({ ...s, pieceIds: [...s.pieceIds] }))
+  for (const a of additions) {
+    sessions[a.sessionIndex]?.pieceIds.push(a.pieceId)
+  }
+  return {
+    ...plan,
+    sessions: sessions.map((s) => {
+      const used = new Set<string>()
+      for (const pieceId of s.pieceIds) {
+        for (const id of pieceById.get(pieceId)?.playerIds ?? []) used.add(id)
+      }
+      return {
+        pieceIds: s.pieceIds,
+        playerIds: [...used],
+        idlePlayerIds: allPlayers.filter((p) => !used.has(p.id)).map((p) => p.id),
+      }
+    }),
+  }
+}
+
 /** Players appearing in more pieces than the day has sessions — those pieces
  *  can never all be placed, however the plan is arranged. */
 export function overbookedPlayers(
